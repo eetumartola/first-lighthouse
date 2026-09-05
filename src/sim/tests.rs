@@ -541,7 +541,7 @@ fn arriving_ship_shows_at_the_edge_then_fades() {
 }
 
 #[test]
-fn creature_surfaces_when_it_calls_and_skip_to_dawn_ends_the_night() {
+fn creature_stays_dark_through_its_calls_and_skip_to_dawn_ends_the_night() {
     let mut w = World::new(Mode::NightWatch, Tuning::default());
     let creature = loop {
         w.step(Input::default(), DT);
@@ -550,23 +550,18 @@ fn creature_surfaces_when_it_calls_and_skip_to_dawn_ends_the_night() {
         }
         assert!(w.phase == Phase::Night || matches!(w.phase, Phase::Intro { .. }), "creature never appeared");
     };
-    // The reveal fades in: nothing at the instant of arrival, a silhouette half a second later.
-    assert_eq!(w.entity_visibility(w.sea.entity(creature).unwrap()), Visibility::Hidden);
-    for _ in 0..30 {
+    // Unlit water never shows the body: not on arrival, not when it calls (the call is a sound
+    // cue; its glowing eyes are presentation). Run past two call periods with the beam parked.
+    let mut calls = 0;
+    for _ in 0..(60.0 * w.tuning().creature_call_period * 2.2) as usize {
         w.step(Input::default(), DT);
-    }
-    let arriving = w.sea.entity(creature).unwrap();
-    assert!(matches!(w.entity_visibility(arriving), Visibility::Silhouette(k) if k > 0.3), "{:?}", w.entity_visibility(arriving));
-    // Then it fades out and sinks back into darkness until its next call surfaces it again.
-    let mut phases: Vec<bool> = vec![true];
-    for _ in 0..(60.0 * w.tuning().creature_call_period * 1.5) as usize {
-        w.step(Input::default(), DT);
-        let vis = w.entity_visibility(w.sea.entity(creature).unwrap()).is_visible();
-        if phases.last() != Some(&vis) {
-            phases.push(vis);
+        calls += w.drain_events().iter().filter(|e| matches!(e, Event::CreatureCall { .. })).count();
+        let e = w.sea.entity(creature).unwrap();
+        if !w.sea.charge.is_strong(e.pos, w.tuning()) && w.sea.charge.charge_at(e.pos) < w.tuning().silhouette_min_glow {
+            assert_eq!(w.entity_visibility(e), Visibility::Hidden, "creature showed in the dark");
         }
     }
-    assert!(phases.starts_with(&[true, false, true]), "unexpected visibility sequence: {phases:?}");
+    assert!(calls >= 2, "creature never called: {calls}");
     w.skip_to_dawn();
     w.step(Input::default(), DT);
     assert!(matches!(w.phase, Phase::Dawn { .. }), "{:?}", w.phase);

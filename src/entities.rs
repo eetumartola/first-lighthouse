@@ -47,6 +47,10 @@ struct LitPart;
 #[derive(Component)]
 struct SilhouettePart;
 
+/// A creature's eyes: they glow on their own, so they stay visible in the dark.
+#[derive(Component)]
+struct EyePart;
+
 #[derive(Resource, Default)]
 struct VisualMap {
     generation: u32,
@@ -182,13 +186,13 @@ fn parts(assets: &FormAssets, form: Form) -> Vec<(Handle<Mesh>, Handle<StandardM
 fn spawn_form(commands: &mut Commands, assets: &FormAssets, form: Form, transform: Transform) -> Entity {
     let parent = commands.spawn((transform, Visibility::Hidden, SessionScoped)).id();
     for (mesh, material, local) in parts(assets, form) {
-        commands.spawn((
-            LitPart,
-            Mesh3d(mesh.clone()),
-            MeshMaterial3d(material),
-            local,
-            ChildOf(parent),
-        ));
+        let eye = material == assets.eye_glow;
+        let lit = commands
+            .spawn((LitPart, Mesh3d(mesh.clone()), MeshMaterial3d(material), local, ChildOf(parent)))
+            .id();
+        if eye {
+            commands.entity(lit).insert(EyePart);
+        }
         commands.spawn((
             SilhouettePart,
             Mesh3d(mesh),
@@ -272,7 +276,10 @@ fn apply_visibility(
     session: Res<Session>,
     assets: Res<FormAssets>,
     mut parents: Query<(&Visual, &mut Visibility, &Children)>,
-    mut parts: Query<(&mut Visibility, Has<LitPart>, Option<&mut MeshMaterial3d<StandardMaterial>>, Has<SilhouettePart>), Without<Visual>>,
+    mut parts: Query<
+        (&mut Visibility, Has<LitPart>, Option<&mut MeshMaterial3d<StandardMaterial>>, Has<SilhouettePart>, Has<EyePart>),
+        Without<Visual>,
+    >,
 ) {
     let Some(world) = session.world() else { return };
     for (visual, mut vis, children) in &mut parents {
@@ -281,9 +288,12 @@ fn apply_visibility(
             continue;
         };
         let mode_vis = world.entity_visibility(e);
-        *vis = if mode_vis.is_visible() { Visibility::Visible } else { Visibility::Hidden };
+        // A creature's eyes glow by themselves: they show in the dark whenever it is in the
+        // inspected world, even when the rest of it is hidden.
+        let eyes_in_dark = e.form == Form::Creature && e.is_active() && world.entity_world(e) == world.inspected_world();
+        *vis = if mode_vis.is_visible() || eyes_in_dark { Visibility::Visible } else { Visibility::Hidden };
         for child in children.iter() {
-            if let Ok((mut cv, lit, material, sil)) = parts.get_mut(child) {
+            if let Ok((mut cv, lit, material, sil, eye)) = parts.get_mut(child) {
                 // A creature's silhouette is its own dim glow (eyes, sheen); other forms are opaque
                 // dark shapes whose clarity follows the glow around them.
                 let show = match mode_vis {
@@ -301,7 +311,7 @@ fn apply_visibility(
                         }
                         sil
                     }
-                    SimVis::Hidden => false,
+                    SimVis::Hidden => eye && eyes_in_dark,
                 };
                 *cv = if show { Visibility::Inherited } else { Visibility::Hidden };
             }

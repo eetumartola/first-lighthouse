@@ -90,11 +90,7 @@ pub fn step(nw: &mut NightWatch, sea: &mut Sea, dt: f32) {
     if t.night_watch_monster && nw.creature_id.is_none() && night_time >= t.night_watch_creature_activation {
         let (pos, heading) = nw.creature_spawn;
         let id = sea.spawn("Leviathan", Form::Creature, pos, heading.to_radians());
-        // It breaks the surface as it arrives, so the "something stirs" cue has a sighting.
-        let now = sea.time;
-        if let Some(c) = sea.entity_mut(id) {
-            c.surface(now, t.creature_surface_seconds);
-        }
+        // Its eyes are the sighting the "something stirs" cue points at; the body stays dark.
         sea.events.push(Event::CreatureAppears { id, pos });
         nw.creature_id = Some(id);
     }

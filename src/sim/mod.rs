@@ -283,12 +283,10 @@ impl Sea {
         (hit_rock || hit_solid).then_some(Cause::Rock)
     }
 
-    /// Shared periodic sound information from darkness. A calling creature also breaks the
-    /// surface for a moment, so the cue has a visible counterpart.
+    /// Shared periodic sound information from darkness: ship bells and the creature's call.
     fn emit_ambient_cues(&mut self, dt: f32) {
         let prev = self.time - dt;
         let now = self.time;
-        let surface_seconds = self.tuning.creature_surface_seconds;
         let call_period = self.tuning.creature_call_period;
         let mut cues = Vec::new();
         for e in self.entities.iter_mut().filter(|e| e.is_active()) {
@@ -302,10 +300,8 @@ impl Sea {
             if k_now > k_prev {
                 cues.push(match e.form {
                     Form::Ship => Event::Bell { pos: e.pos },
-                    _ => {
-                        e.surface(now, surface_seconds);
-                        Event::CreatureCall { pos: e.pos }
-                    }
+                    // The call is heard, not seen: in the dark only the eyes give the creature away.
+                    _ => Event::CreatureCall { pos: e.pos },
                 });
             }
         }

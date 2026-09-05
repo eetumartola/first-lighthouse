@@ -92,10 +92,8 @@ pub struct Tuning {
     pub creature_stickiness: f32,
     /// Charge seconds removed per second from cells under the predator.
     pub creature_consume_rate: f32,
-    /// Seconds between creature calls; each call surfaces it briefly.
+    /// Seconds between creature calls (heard, not seen: in the dark only its eyes show).
     pub creature_call_period: f32,
-    /// How long a calling creature stays visible as a silhouette.
-    pub creature_surface_seconds: f32,
     /// How long a newly arrived ship shows at the world's edge as a silhouette.
     pub ship_arrival_reveal_seconds: f32,
 
@@ -184,7 +182,6 @@ impl Default for Tuning {
             creature_stickiness: 1.3,
             creature_consume_rate: 6.0,
             creature_call_period: 8.0,
-            creature_surface_seconds: 2.5,
             ship_arrival_reveal_seconds: 2.0,
 
             night_watch_max_active_ships: 3,
