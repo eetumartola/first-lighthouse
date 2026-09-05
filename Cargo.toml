@@ -1,0 +1,22 @@
+[package]
+name = "first_light"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = { version = "0.19.1", features = ["wav"] }
+glam = "0.32"
+
+[features]
+# Faster incremental iteration: `cargo run --features dev`
+dev = ["bevy/dynamic_linking"]
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
