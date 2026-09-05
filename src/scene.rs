@@ -573,7 +573,7 @@ fn update_beam_lights(
                 light.outer_angle = half_angle;
                 light.inner_angle = half_angle * 0.3;
                 light.range = r_max + 6.0;
-                light.intensity = if shaft_on { 60_000.0 * level } else { 0.0 };
+                light.intensity = if shaft_on { 90_000.0 * level } else { 0.0 };
             }
             Footprint::Sector { angle_start, angle_end, r_max, .. } => {
                 let half = (angle_end - angle_start) * 0.5;
@@ -596,7 +596,7 @@ fn update_beam_lights(
                 light.outer_angle = (radius / height).atan();
                 light.inner_angle = light.outer_angle * 0.6;
                 light.range = height + 10.0;
-                light.intensity = if shaft_on { 90_000.0 * level } else { 0.0 };
+                light.intensity = if shaft_on { 260_000.0 * level } else { 0.0 };
             }
             Footprint::Sector { .. } => {
                 let height = 80.0;

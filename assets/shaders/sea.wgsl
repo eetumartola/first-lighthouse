@@ -99,18 +99,23 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let plankton_color = mix(vec3<f32>(0.10, 0.55, 0.75), vec3<f32>(0.35, 0.95, 0.95), strong);
     var emissive = plankton_color * glow;
 
-    // Beam footprint: the stylized patch that actually charges the water.
+    // Beam footprint: the stylized patch that actually charges the water. It brightens the water
+    // itself (so the spotlight's ripples show) and adds a warm glow with a wave-broken edge.
     var fp = 0.0;
     if sea.fp_kind != 0u {
         let b = atan2(sim.x, sim.y);
         let d = abs(angle_delta(sea.fp_bearing, b));
-        let edge = select(0.9, 0.2, sea.fp_kind == 2u);
-        let in_ang = 1.0 - smoothstep(sea.fp_half_angle * (1.0 - edge * 0.35), sea.fp_half_angle, d);
-        let in_r = smoothstep(sea.fp_r_min, sea.fp_r_min + 2.5, r) * (1.0 - smoothstep(sea.fp_r_max - 2.5, sea.fp_r_max, r));
+        let edge = select(0.35, 0.2, sea.fp_kind == 2u);
+        let in_ang = 1.0 - smoothstep(sea.fp_half_angle * (1.0 - edge), sea.fp_half_angle, d);
+        let in_r = smoothstep(sea.fp_r_min, sea.fp_r_min + 1.5, r) * (1.0 - smoothstep(sea.fp_r_max - 1.5, sea.fp_r_max, r));
         fp = in_ang * in_r;
     }
-    let fp_strength = select(0.42, 0.05, sea.fp_kind == 2u);
-    emissive = emissive + vec3<f32>(1.0, 0.82, 0.55) * fp * fp_strength;
+    // Light on water: waves catch it unevenly.
+    let wave_catch = 0.75 + 0.25 * (w1 * 0.5 + w3 * 0.5);
+    let fp_strength = select(1.1, 0.06, sea.fp_kind == 2u) * wave_catch;
+    emissive = emissive + vec3<f32>(1.0, 0.86, 0.6) * fp * fp_strength;
+    let lit_water = vec4<f32>(0.32, 0.42, 0.5, 1.0);
+    pbr_input.material.base_color = mix(pbr_input.material.base_color, lit_water, fp * select(0.85, 0.2, sea.fp_kind == 2u));
 
     // Dawn: the sea lightens and the plankton fades against daylight.
     emissive = emissive * (1.0 - 0.85 * sea.dawn);
