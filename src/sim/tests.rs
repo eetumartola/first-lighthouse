@@ -557,7 +557,7 @@ fn creature_stays_dark_through_its_calls_and_skip_to_dawn_ends_the_night() {
         w.step(Input::default(), DT);
         calls += w.drain_events().iter().filter(|e| matches!(e, Event::CreatureCall { .. })).count();
         let e = w.sea.entity(creature).unwrap();
-        if !w.sea.charge.is_strong(e.pos, w.tuning()) && w.sea.charge.charge_at(e.pos) < w.tuning().silhouette_min_glow {
+        if w.sea.charge.charge_at(e.pos) < w.tuning().silhouette_min_glow {
             assert_eq!(w.entity_visibility(e), Visibility::Hidden, "creature showed in the dark");
         }
     }
