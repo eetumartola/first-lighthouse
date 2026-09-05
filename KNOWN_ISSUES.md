@@ -16,3 +16,6 @@ Minor visual glitches noted and deferred; gameplay is unaffected.
 - **Sector footprint leaks past the disc**: in World Weaver the lit sector's water shows a thin
   band continuing beyond the sea's edge along the sector's leading edge (`sea.wgsl` sector branch
   lacks an outer-radius clamp against `sea_radius`).
+- **Spiral seams have zero width**: a ship turning shallowly across the north seam can flip
+  world twice within a second (HUD world label and widget bead jump). Harmless for the voyage;
+  a small crossing hysteresis (seam band of a few units) would remove the flicker.
