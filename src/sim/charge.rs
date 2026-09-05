@@ -142,7 +142,8 @@ impl ChargeField {
         let j1 = (hi.y.max(0.0) as usize).min(self.size);
         // Diminishing returns: a cell gains at the full rate when dark and ever more slowly as it
         // fills, so a lingering beam brightens a spot gently instead of saturating it. Charging
-        // also undoes this step's decay so a dark lit cell gains exactly `charge_rate * dt`.
+        // also restores this step's decay, so a lit cell never loses glow (a dark cell, which had
+        // nothing to lose, gains one frame's worth extra: negligible).
         for j in j0..j1 {
             for i in i0..i1 {
                 let idx = j * self.size + i;
@@ -203,12 +204,13 @@ mod tests {
         let next = second(&mut f);
         assert!(first > 0.8 * t.charge_rate && first < t.charge_rate, "{first}");
         assert!(next < first, "{next} >= {first}");
-        // A lingering beam creeps toward the cap without ever exceeding it.
+        // A lingering beam creeps toward the cap and never exceeds it at any step.
         for _ in 0..(60.0 * 30.0) as usize {
             f.step(Some(&fp), &t, dt);
+            assert!(f.charge_at(p) <= t.charge_cap, "{}", f.charge_at(p));
         }
         let held = f.charge_at(p);
-        assert!(held > 0.9 * t.charge_cap && held <= t.charge_cap, "{held}");
+        assert!(held > 0.9 * t.charge_cap, "{held}");
         // Outside the footprint nothing charged.
         assert_eq!(f.charge_at(-p), 0.0);
         // Decay: one second of darkness costs one second of glow.
