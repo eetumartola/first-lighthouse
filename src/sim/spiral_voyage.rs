@@ -103,7 +103,7 @@ impl SpiralVoyage {
                 islands::radial(300.0, 44.0, 6, 4.4, 3.0),
             ]),
             // World 4: the harbor world. An islet east, a reef band south-east; the harbor's
-            // southern approach stays open.
+            // north-western approach stays open.
             islands::land(vec![
                 islands::islet(p(60.0, 30.0), 5.0),
                 islands::arc(46.0, 100.0, 140.0, 3.0),

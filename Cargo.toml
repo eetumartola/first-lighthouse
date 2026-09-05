@@ -8,7 +8,11 @@ bevy = { version = "0.19.1", features = ["wav"] }
 glam = "0.32"
 
 [features]
-# Faster incremental iteration: `cargo run --features dev`
+# Faster incremental iteration: `cargo run --features dev`. The exe then needs bevy_dylib from
+# target/debug/deps, so it only starts via `cargo run`. Standalone exes live elsewhere so they
+# never clobber this loop:
+#   cargo build --target-dir target/static     -> target/static/debug/first_light.exe (minutes)
+#   cargo build --release                      -> target/release/first_light.exe (~10 min, LTO)
 dev = ["bevy/dynamic_linking"]
 # Browser build (Trunk): WebGPU backend so volumetric fog and the sea material work in the browser.
 web = ["bevy/web", "bevy/webgpu"]

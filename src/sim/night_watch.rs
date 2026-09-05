@@ -28,8 +28,8 @@ pub struct NightWatch {
 
 impl NightWatch {
     /// Fixed scenario: overlapping arrivals; a north reef, an eastern islet with a tail, a line of
-    /// south-western skerries and a south-eastern rock pair shape the approaches. The southern
-    /// corridor into the harbor stays open and unambiguous.
+    /// south-western skerries and a south-eastern rock pair shape the approaches. The harbor sits
+    /// north of the lighthouse; the reef makes ships from the north round it either way.
     pub fn scenario(_t: &Tuning) -> (Self, Vec<Circle>) {
         let rocks = islands::land(vec![
             islands::arc(46.0, -20.0, 20.0, 3.5),
@@ -67,6 +67,11 @@ fn spawn_due(nw: &mut NightWatch, sea: &mut Sea, night_time: f32) {
             break;
         }
         let id = sea.spawn(a.name, Form::Ship, a.pos, a.heading_deg.to_radians());
+        // A new arrival is seen at the world's edge for a moment, so the player knows where to look.
+        let (now, seconds) = (sea.time, sea.tuning.ship_arrival_reveal_seconds);
+        if let Some(e) = sea.entity_mut(id) {
+            e.surface(now, seconds);
+        }
         sea.events.push(Event::ShipArrived { id, pos: a.pos });
         nw.next_arrival += 1;
     }
@@ -86,9 +91,9 @@ pub fn step(nw: &mut NightWatch, sea: &mut Sea, dt: f32) {
         let (pos, heading) = nw.creature_spawn;
         let id = sea.spawn("Leviathan", Form::Creature, pos, heading.to_radians());
         // It breaks the surface as it arrives, so the "something stirs" cue has a sighting.
-        let surfaced_until = sea.time + t.creature_surface_seconds;
+        let now = sea.time;
         if let Some(c) = sea.entity_mut(id) {
-            c.surfaced_until = surfaced_until;
+            c.surface(now, t.creature_surface_seconds);
         }
         sea.events.push(Event::CreatureAppears { id, pos });
         nw.creature_id = Some(id);

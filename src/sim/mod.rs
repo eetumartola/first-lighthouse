@@ -68,12 +68,12 @@ impl Mode {
         match self {
             Mode::NightWatch => {
                 "Ships follow the glowing water you paint ahead of them and keep their heading when the trail fades. \
-                 Guide them into the southern harbor before dawn; a ship-sized predator eats the glow it finds and sinks what it touches."
+                 Guide them into the northern harbor before dawn; a ship-sized predator eats the glow it finds and sinks what it touches."
             }
             Mode::MutableSea => {
                 "Ships follow the glowing water you paint ahead of them, and only your light keeps a thing what it is: \
                  in darkness each of the three identities turns ship, wreck, creature, island, ship again. \
-                 Bring two of them into the southern harbor as ships before dawn."
+                 Bring two of them into the northern harbor as ships before dawn."
             }
             Mode::WorldWeaver => {
                 "World 1 is the sea the ship will sail; winding the beam onward shows Worlds 2 to 4, and Space copies the lit \
@@ -90,7 +90,7 @@ impl Mode {
     /// One line that stays on screen all night.
     pub fn objective(self) -> &'static str {
         match self {
-            Mode::NightWatch => "Paint glowing routes ahead of ships and bring them to the southern harbor.",
+            Mode::NightWatch => "Paint glowing routes ahead of ships and bring them to the northern harbor.",
             Mode::MutableSea => "Your light holds a form still; darkness changes it. Bring 2 of 3 home as ships.",
             Mode::WorldWeaver => "Copy sectors from Worlds 2 to 4 into World 1 until the lane connects to the harbor.",
             Mode::SpiralVoyage => "Guide the ship across the north seam through all four worlds to the harbor in World 4.",
@@ -255,7 +255,7 @@ impl Sea {
         let harbor = self.tuning.harbor_center;
         let Some(e) = self.entity_mut(id) else { return };
         e.status = Status::Secured;
-        e.pos = harbor + Vec2::new(-3.0 + 1.5 * slot as f32, -1.5 + 0.8 * (slot % 2) as f32);
+        e.pos = harbor + Vec2::new(-3.0 + 1.5 * slot as f32, 1.5 - 0.8 * (slot % 2) as f32);
         e.heading = std::f32::consts::PI;
         e.brain = Default::default();
     }
@@ -288,7 +288,7 @@ impl Sea {
     fn emit_ambient_cues(&mut self, dt: f32) {
         let prev = self.time - dt;
         let now = self.time;
-        let surface_until = now + self.tuning.creature_surface_seconds;
+        let surface_seconds = self.tuning.creature_surface_seconds;
         let call_period = self.tuning.creature_call_period;
         let mut cues = Vec::new();
         for e in self.entities.iter_mut().filter(|e| e.is_active()) {
@@ -303,7 +303,7 @@ impl Sea {
                 cues.push(match e.form {
                     Form::Ship => Event::Bell { pos: e.pos },
                     _ => {
-                        e.surfaced_until = surface_until;
+                        e.surface(now, surface_seconds);
                         Event::CreatureCall { pos: e.pos }
                     }
                 });
@@ -569,8 +569,9 @@ impl World {
                     return Visibility::Hidden;
                 }
                 let vis = self.visibility(e.pos, e.radius);
-                if vis == Visibility::Hidden && e.form == Form::Creature && self.sea.time < e.surfaced_until {
-                    Visibility::Silhouette(0.6)
+                let reveal = e.reveal(self.sea.time);
+                if vis == Visibility::Hidden && reveal > 0.02 {
+                    Visibility::Silhouette(0.6 * reveal)
                 } else {
                     vis
                 }

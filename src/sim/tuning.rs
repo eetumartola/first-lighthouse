@@ -83,6 +83,8 @@ pub struct Tuning {
     pub night_watch_creature_activation: f32,
     pub creature_speed: f32,
     pub creature_turn_rate_deg: f32,
+    /// Radius around the predator within which it eats plankton, beyond its own hull radius.
+    pub creature_mouth: f32,
     /// Finite detection radius for stored plankton charge.
     pub creature_detect_radius: f32,
     pub creature_contact_radius: f32,
@@ -94,6 +96,8 @@ pub struct Tuning {
     pub creature_call_period: f32,
     /// How long a calling creature stays visible as a silhouette.
     pub creature_surface_seconds: f32,
+    /// How long a newly arrived ship shows at the world's edge as a silhouette.
+    pub ship_arrival_reveal_seconds: f32,
 
     // --- Night Watch ---
     pub night_watch_max_active_ships: usize,
@@ -128,7 +132,7 @@ impl Default for Tuning {
         Self {
             sea_radius,
             island_radius: 8.0,
-            harbor_center: Vec2::new(0.0, -14.0),
+            harbor_center: Vec2::new(0.0, 14.0),
             harbor_radius: 6.0,
             cell_size: 2.0,
 
@@ -172,14 +176,16 @@ impl Default for Tuning {
 
             night_watch_monster: true,
             night_watch_creature_activation: 50.0,
-            creature_speed: 2.0,
-            creature_turn_rate_deg: 70.0,
+            creature_speed: 3.0,
+            creature_turn_rate_deg: 40.0,
+            creature_mouth: 2.0,
             creature_detect_radius: 40.0,
             creature_contact_radius: 2.4,
             creature_stickiness: 1.3,
             creature_consume_rate: 6.0,
             creature_call_period: 8.0,
             creature_surface_seconds: 2.5,
+            ship_arrival_reveal_seconds: 2.0,
 
             night_watch_max_active_ships: 3,
 

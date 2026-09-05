@@ -512,6 +512,29 @@ fn modes_start_fresh_and_carry_no_state() {
 }
 
 #[test]
+fn arriving_ship_shows_at_the_edge_then_fades() {
+    let mut w = World::new(Mode::NightWatch, Tuning::default());
+    // Cormorant is the first night-time arrival (the dusk boats are visible anyway).
+    let ship = loop {
+        w.step(Input::default(), DT);
+        if let Some(s) = w.sea.entities.iter().find(|e| e.name == "Cormorant") {
+            break s.id;
+        }
+        assert!(w.phase != Phase::Finished, "Cormorant never arrived");
+    };
+    let mut peak = 0.0f32;
+    for _ in 0..(60.0 * w.tuning().ship_arrival_reveal_seconds) as usize {
+        w.step(Input::default(), DT);
+        if let Visibility::Silhouette(k) = w.entity_visibility(w.sea.entity(ship).unwrap()) {
+            peak = peak.max(k);
+        }
+    }
+    assert!(peak > 0.5, "arrival never revealed the ship: peak {peak}");
+    w.step(Input::default(), DT);
+    assert_eq!(w.entity_visibility(w.sea.entity(ship).unwrap()), Visibility::Hidden, "reveal did not end");
+}
+
+#[test]
 fn creature_surfaces_when_it_calls_and_skip_to_dawn_ends_the_night() {
     let mut w = World::new(Mode::NightWatch, Tuning::default());
     let creature = loop {
@@ -521,8 +544,14 @@ fn creature_surfaces_when_it_calls_and_skip_to_dawn_ends_the_night() {
         }
         assert!(w.phase == Phase::Night || matches!(w.phase, Phase::Intro { .. }), "creature never appeared");
     };
+    // The reveal fades in: nothing at the instant of arrival, a silhouette half a second later.
+    assert_eq!(w.entity_visibility(w.sea.entity(creature).unwrap()), Visibility::Hidden);
+    for _ in 0..30 {
+        w.step(Input::default(), DT);
+    }
     let arriving = w.sea.entity(creature).unwrap();
-    assert!(matches!(w.entity_visibility(arriving), Visibility::Silhouette(_)));
+    assert!(matches!(w.entity_visibility(arriving), Visibility::Silhouette(k) if k > 0.3), "{:?}", w.entity_visibility(arriving));
+    // Then it fades out and sinks back into darkness until its next call surfaces it again.
     let mut phases: Vec<bool> = vec![true];
     for _ in 0..(60.0 * w.tuning().creature_call_period * 1.5) as usize {
         w.step(Input::default(), DT);

@@ -217,7 +217,7 @@ pub fn steer_predator(e: &mut Entity, field: &mut ChargeField, land: &[Circle], 
         }
     }
     slide_off_land(e, land, t.creature_speed * dt);
-    field.consume(e.pos, e.radius + 0.6, t.creature_consume_rate * dt);
+    field.consume(e.pos, e.radius + t.creature_mouth, t.creature_consume_rate * dt);
 }
 
 /// Land blocks movement: push out along the contact normal, then slide tangentially so a head-on

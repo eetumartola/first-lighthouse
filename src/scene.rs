@@ -261,7 +261,7 @@ fn setup_scene(
     let lamp = meshes.add(Sphere::new(0.45));
     let hc = t.harbor_center;
     for i in 0..9 {
-        // Posts along the harbor circle away from the entrance (south).
+        // Posts along the harbor circle, leaving the seaward (north) side open as the entrance.
         let a = 60f32.to_radians() + i as f32 * (240f32.to_radians() / 8.0);
         let p = hc + glam::Vec2::new(a.sin(), a.cos()) * t.harbor_radius;
         commands.spawn((
@@ -271,7 +271,7 @@ fn setup_scene(
         ));
     }
     for side in [-1.0f32, 1.0] {
-        let p = hc + glam::Vec2::new(side * t.harbor_radius * 0.75, -t.harbor_radius * 0.75);
+        let p = hc + glam::Vec2::new(side * t.harbor_radius * 0.75, t.harbor_radius * 0.75);
         commands.spawn((
             Mesh3d(post.clone()),
             MeshMaterial3d(dark_stone.clone()),

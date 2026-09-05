@@ -91,14 +91,15 @@ impl WorldWeaver {
     pub fn scenario(t: &Tuning) -> Self {
         let p = Piece::new;
         let plain = p(false, false, false);
-        // World 1 baseline: the lane enters through sector 1's outer gap (the only way in from
-        // open water), the only inner gap is at the harbor sector, and radial walls at 3 and 10
-        // seal both ways round the channel.
+        // World 1 baseline: the lane enters through sector 7's outer gap (south-west, the only way
+        // in from open water), the harbor's inner gaps sit at sectors 11 and 0 (north), and radial
+        // walls at 3 and 10 seal both ways round the channel between them.
         let mut world1 = vec![plain; 12];
-        world1[1] = p(true, false, false);
+        world1[7] = p(true, false, false);
         world1[3] = p(false, false, true);
-        world1[6] = p(false, true, false);
         world1[10] = p(false, false, true);
+        world1[11] = p(false, true, false);
+        world1[0] = p(false, true, false);
         // World 2: opens the east (sector 3) with an inner shortcut, but walls 5 and 8.
         let mut world2 = vec![plain; 12];
         world2[0] = p(false, true, false);
@@ -122,14 +123,14 @@ impl WorldWeaver {
         world4[3] = p(false, false, true);
         world4[8] = p(false, true, false);
         world4[10] = p(false, false, true);
-        world4[1] = p(false, false, false); // copying this closes the entrance: a real mistake
+        world4[7] = p(false, false, false); // copying this closes the entrance: a real mistake
         world4[5] = p(true, false, false);
         Self {
             worlds: vec![world1.clone(), world2, world3, world4],
             assembled: world1,
             edited: vec![false; t.weaver_sectors],
-            lane_start: islands::polar(45.0, 92.0),
-            lane_heading: 225f32.to_radians(),
+            lane_start: islands::polar(225.0, 92.0),
+            lane_heading: 45f32.to_radians(),
             last_layer: 0,
             playback: Playback::default(),
             built: None,

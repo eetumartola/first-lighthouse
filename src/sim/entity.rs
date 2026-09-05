@@ -122,7 +122,9 @@ pub struct Entity {
     pub lantern: bool,
     pub brain: Brain,
     pub mutable: Option<Mutable>,
-    /// Creatures surface briefly when they call; visible as a silhouette until this sim time.
+    /// Reveal window: an entity that has surfaced (a calling creature, a ship arriving at the
+    /// edge) shows as a silhouette fading in and out between these sim times.
+    pub surfaced_at: f32,
     pub surfaced_until: f32,
     /// Spiral Voyage: unwrapped compass angle of `pos`, so seam crossings change world.
     /// `floor(winding / TAU)` is the entity's world index. Unused (0) elsewhere.
@@ -142,6 +144,7 @@ impl Entity {
             lantern: form == Form::Ship,
             brain: Brain::default(),
             mutable: None,
+            surfaced_at: 0.0,
             surfaced_until: 0.0,
             winding: 0.0,
         }
@@ -160,10 +163,32 @@ impl Entity {
         self.radius = form.radius(t);
         self.lantern = form == Form::Ship;
         self.brain = Brain::default();
+        self.surfaced_at = 0.0;
         self.surfaced_until = 0.0;
     }
 
     pub fn circle(&self) -> super::geom::Circle {
         super::geom::Circle::new(self.pos, self.radius)
+    }
+
+    /// Show as a silhouette from `now` for `seconds`, fading in and out.
+    pub fn surface(&mut self, now: f32, seconds: f32) {
+        self.surfaced_at = now;
+        self.surfaced_until = now + seconds;
+    }
+
+    /// Silhouette strength of the reveal at `now`: 0 outside the window, rising over the first
+    /// third, full in the middle, fading over the last third.
+    pub fn reveal(&self, now: f32) -> f32 {
+        let span = self.surfaced_until - self.surfaced_at;
+        if span <= 0.0 || now < self.surfaced_at || now >= self.surfaced_until {
+            return 0.0;
+        }
+        let x = (now - self.surfaced_at) / span;
+        let smooth = |a: f32, b: f32, v: f32| {
+            let t = ((v - a) / (b - a)).clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        smooth(0.0, 0.33, x) * (1.0 - smooth(0.67, 1.0, x))
     }
 }
