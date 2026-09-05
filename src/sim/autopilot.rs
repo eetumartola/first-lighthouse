@@ -44,7 +44,9 @@ impl Keeper {
             Mode::SpiralVoyage => Self {
                 routes: HashMap::new(),
                 world_routes: spiral_routes(),
-                target_charge: 12.0,
+                // Soft-saturating charge reaches 12 s a third slower than it used to; at 4 u/s
+                // the ship outruns a keeper that waits for that, so it moves on at 8 s.
+                target_charge: 8.0,
                 focus: None,
                 plan: Vec::new(),
                 plan_index: 0,
@@ -244,7 +246,8 @@ pub fn spiral_routes() -> Vec<Vec<Vec2>> {
         polar_pts(&[(315.0, 40.0), (330.0, 40.0), (345.0, 40.0), (358.0, 40.0)]),
         polar_pts(&[
             (10.0, 40.0), (25.0, 48.0), (45.0, 50.0), (65.0, 50.0), (85.0, 46.0), (110.0, 40.0), (135.0, 34.0),
-            (160.0, 30.0), (185.0, 32.0), (215.0, 42.0), (240.0, 44.0), (265.0, 40.0), (290.0, 38.0),
+            // Clear of the inner reef arc (r 30, 200°-250°) with hull margin.
+            (160.0, 32.0), (185.0, 38.0), (215.0, 46.0), (240.0, 46.0), (265.0, 40.0), (290.0, 38.0),
             (315.0, 36.0), (340.0, 36.0), (358.0, 36.0),
         ]),
         polar_pts(&[

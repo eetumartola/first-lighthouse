@@ -313,6 +313,14 @@ fn spiral_beam_and_ship_can_be_in_different_worlds_and_charge_stays_local() {
     let ship = spiral(&w).ship.unwrap();
     let ship_world0 = w.entity_world(w.sea.entity(ship).unwrap());
     assert_eq!(ship_world0, 0);
+    // Put the ship on open dark water (south, sailing west) so the beam's full-circuit sweep
+    // through World 1 lights nothing within its lookahead; the test is about the ship sailing on.
+    if let Some(e) = w.sea.entity_mut(ship) {
+        e.pos = Vec2::new(0.0, -60.0);
+        e.heading = 270f32.to_radians();
+        e.brain.desired = e.heading;
+        e.winding = bearing_of(e.pos);
+    }
     // Wind the beam a full circuit forward into World 2 and dwell there.
     let t = w.tuning().clone();
     for _ in 0..(t.beam_turn_seconds * 60.0) as usize + 60 {

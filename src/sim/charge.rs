@@ -140,8 +140,9 @@ impl ChargeField {
         let j0 = lo.y.max(0.0) as usize;
         let i1 = (hi.x.max(0.0) as usize).min(self.size);
         let j1 = (hi.y.max(0.0) as usize).min(self.size);
-        // Charging also undoes this step's decay so a lit cell gains exactly `charge_rate * dt`.
-        let gain = (tuning.charge_rate + 1.0) * dt;
+        // Diminishing returns: a cell gains at the full rate when dark and ever more slowly as it
+        // fills, so a lingering beam brightens a spot gently instead of saturating it. Charging
+        // also undoes this step's decay so a dark lit cell gains exactly `charge_rate * dt`.
         for j in j0..j1 {
             for i in i0..i1 {
                 let idx = j * self.size + i;
@@ -149,7 +150,9 @@ impl ChargeField {
                     continue;
                 }
                 if fp.contains(self.cell_center(idx)) {
-                    self.charge[idx] = (self.charge[idx] + gain).min(tuning.charge_cap);
+                    let c = self.charge[idx];
+                    let headroom = (1.0 - c / tuning.charge_cap).max(0.0);
+                    self.charge[idx] = (c + (tuning.charge_rate * headroom + 1.0) * dt).min(tuning.charge_cap);
                 }
             }
         }
@@ -181,28 +184,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn charge_rate_cap_and_decay_follow_tuning() {
+    fn charge_saturates_softly_and_decays_linearly() {
         let t = Tuning::default();
         let mut f = ChargeField::new(&t, &[]);
         let b = Beam::new(FootprintKind::Spot, &t);
         let fp = b.footprint(&t);
         let p = fp.center();
         let dt = 1.0 / 60.0;
-        for _ in 0..60 {
+        let second = |f: &mut ChargeField| {
+            let before = f.charge_at(p);
+            for _ in 0..60 {
+                f.step(Some(&fp), &t, dt);
+            }
+            f.charge_at(p) - before
+        };
+        // Dark water charges at nearly the full rate; each further second yields less.
+        let first = second(&mut f);
+        let next = second(&mut f);
+        assert!(first > 0.8 * t.charge_rate && first < t.charge_rate, "{first}");
+        assert!(next < first, "{next} >= {first}");
+        // A lingering beam creeps toward the cap without ever exceeding it.
+        for _ in 0..(60.0 * 30.0) as usize {
             f.step(Some(&fp), &t, dt);
         }
-        assert!((f.charge_at(p) - t.charge_rate).abs() < 0.05, "{}", f.charge_at(p));
-        for _ in 0..(60.0 * 20.0) as usize {
-            f.step(Some(&fp), &t, dt);
-        }
-        assert!((f.charge_at(p) - t.charge_cap).abs() < 1e-3);
+        let held = f.charge_at(p);
+        assert!(held > 0.9 * t.charge_cap && held <= t.charge_cap, "{held}");
         // Outside the footprint nothing charged.
         assert_eq!(f.charge_at(-p), 0.0);
         // Decay: one second of darkness costs one second of glow.
         for _ in 0..60 {
             f.step(None, &t, dt);
         }
-        assert!((f.charge_at(p) - (t.charge_cap - 1.0)).abs() < 0.05);
+        assert!((f.charge_at(p) - (held - 1.0)).abs() < 0.05);
     }
 
     #[test]
