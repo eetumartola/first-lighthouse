@@ -35,8 +35,6 @@ pub struct Beam {
     pub constant_speed: bool,
     pub auto_direction: f32,
     pub kind: FootprintKind,
-    /// Finite winding range (Spiral Voyage): the beam cannot wind past these worlds.
-    pub winding_limits: Option<(f32, f32)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -137,7 +135,6 @@ impl Beam {
             constant_speed: false,
             auto_direction: 0.0,
             kind,
-            winding_limits: None,
         }
     }
 
@@ -173,12 +170,6 @@ impl Beam {
             }
         }
         self.winding += self.angular_velocity * dt;
-        if let Some((lo, hi)) = self.winding_limits {
-            if self.winding <= lo || self.winding >= hi {
-                self.winding = self.winding.clamp(lo, hi);
-                self.angular_velocity = 0.0;
-            }
-        }
 
         if self.kind == FootprintKind::Spot {
             self.range = (self.range + input.range.clamp(-1.0, 1.0) * tuning.beam_range_speed * dt)
@@ -238,21 +229,6 @@ mod tests {
         }
         assert_eq!(b.angular_velocity, 0.0);
         assert!(b.winding - at_release < t.sector_angle() * 0.5, "overshoot {}", b.winding - at_release);
-    }
-
-    #[test]
-    fn finite_winding_limits_hold() {
-        let t = Tuning::default();
-        let mut b = Beam::new(FootprintKind::Spot, &t);
-        b.winding_limits = Some((0.0, TAU));
-        for _ in 0..(60.0 * 20.0) as usize {
-            b.update(Input { rotate: 1.0, ..Default::default() }, &t, 1.0 / 60.0);
-        }
-        assert_eq!(b.winding, TAU);
-        for _ in 0..(60.0 * 20.0) as usize {
-            b.update(Input { rotate: -1.0, ..Default::default() }, &t, 1.0 / 60.0);
-        }
-        assert_eq!(b.winding, 0.0);
     }
 
     #[test]

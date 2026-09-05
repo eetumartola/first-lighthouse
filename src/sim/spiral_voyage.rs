@@ -1,6 +1,8 @@
-//! Variant 4 — Spiral Voyage: one ship, four persistent worlds arranged along the beam's
-//! winding. A clockwise circuit past the south seam enters the next world. The beam and the ship
-//! each keep their own winding, so the player can scout ahead while the vessel sails on.
+//! Variant 4 — Spiral Voyage: one ship, four persistent worlds arranged along a spiral that
+//! passes the south seam once per world. Everything is seen from the ship: a position ahead of
+//! it past the seam already belongs to the next world, one behind it before the seam to the
+//! previous. Land, light, the beam and grounding all resolve this way, so the seam never changes
+//! appearance as the ship approaches it; the two worlds only differ at the ship's antipode.
 
 use super::beam::Footprint;
 use super::charge::ChargeField;
@@ -28,19 +30,39 @@ pub enum VoyageEnd {
     Grounded(Vec2),
 }
 
-/// Angular half-width of a seam: the ship's world only changes once its winding is this far past
-/// the seam, so a hull straddling it while turning cannot flip worlds twice.
+/// Where a spiral position resolves for an observer at `winding`/`bearing`: the world of the
+/// unwrapped angle `winding + angle_delta(bearing, bearing_of(p))`, so the half circle ahead of
+/// the observer runs into the next world and the half circle behind into the previous.
+#[derive(Clone, Copy, Debug)]
+pub struct Perspective {
+    pub winding: f32,
+    pub bearing: f32,
+    pub worlds: usize,
+}
+
+impl Perspective {
+    pub fn world_at(&self, p: Vec2) -> usize {
+        world_of(self.winding + angle_delta(self.bearing, bearing_of(p)), self.worlds)
+    }
+}
+
+/// Angular half-width of the seam for `SpiralVoyage::ship_world`.
 pub const SEAM_BAND: f32 = 1.5 * TAU / super::level::COLUMNS as f32;
 
 #[derive(Clone, Debug)]
 pub struct SpiralVoyage {
     pub worlds: Vec<SpiralWorld>,
+    /// The composite the ship sees (and the presentation draws): each cell taken from the world
+    /// it resolves to from the ship's perspective. Rebuilt every step.
+    pub view: ChargeField,
+    cell_bearings: Vec<f32>,
     pub ship: Option<EntityId>,
-    /// The world the ship is in: follows its winding with `SEAM_BAND` hysteresis.
+    /// The world the ship is announced to be in: follows its winding with `SEAM_BAND` hysteresis
+    /// so a hull working radially along the seam does not cross back and forth every step. The
+    /// view of the spiral uses the ship's exact winding and needs no such band.
     pub ship_world: usize,
     pub start: Vec2,
     pub start_heading: f32,
-    pub last_beam_world: usize,
     pub end: Option<VoyageEnd>,
 }
 
@@ -54,19 +76,16 @@ pub fn world_of(winding: f32, worlds: usize) -> usize {
 pub fn winding_in_world(k: usize, bearing: f32) -> f32 {
     bearing + TAU * (k as f32 + if bearing < SEAM { 1.0 } else { 0.0 })
 }
-/// Light and land as seen from a ship at a given winding: positions near the seam resolve into
-/// the neighbouring world instead of leaking charge between unrelated layers.
+/// Light and land as seen from the ship.
 struct SpiralWaters<'a> {
     worlds: &'a [SpiralWorld],
-    ship_winding: f32,
-    ship_bearing: f32,
+    view: Perspective,
     sea_radius: f32,
 }
 
 impl SpiralWaters<'_> {
     fn world_at(&self, p: Vec2) -> usize {
-        let w = self.ship_winding + angle_delta(self.ship_bearing, bearing_of(p));
-        world_of(w, self.worlds.len())
+        self.view.world_at(p)
     }
 }
 
@@ -107,7 +126,7 @@ impl SpiralVoyage {
         // The level is authored as a polar ASCII map; column 0 of each 30-column block is the
         // seam bearing (south) and the bottom row is the island itself.
         let layouts = super::level::parse(super::level::MODE4_LEVEL1, t.island_radius, t.sea_radius);
-        let worlds = layouts
+        let worlds: Vec<SpiralWorld> = layouts
             .into_iter()
             .map(|mut rocks| {
                 rocks.insert(0, island);
@@ -115,17 +134,30 @@ impl SpiralVoyage {
                 SpiralWorld { rocks, charge }
             })
             .collect();
+        let view = worlds[0].charge.clone();
+        let cell_bearings = (0..view.charge.len()).map(|i| bearing_of(view.cell_center(i))).collect();
         Self {
             worlds,
+            view,
+            cell_bearings,
             ship: None,
             ship_world: 0,
             start: islands::polar(300.0, 40.0),
             start_heading: 60f32.to_radians(),
-            last_beam_world: 0,
             end: None,
         }
     }
 
+    /// The ship's view of the spiral; before the ship exists, the start position's.
+    pub fn perspective(&self, sea: &Sea) -> Perspective {
+        let worlds = self.worlds.len();
+        match self.ship.and_then(|id| sea.entity(id)) {
+            Some(e) => Perspective { winding: e.winding, bearing: bearing_of(e.pos), worlds },
+            None => Perspective { winding: winding_in_world(0, bearing_of(self.start)), bearing: bearing_of(self.start), worlds },
+        }
+    }
+
+    /// World the beam footprint centre resolves to from the ship.
     pub fn beam_world(&self, sea: &Sea) -> usize {
         world_of(sea.beam.winding, self.worlds.len())
     }
@@ -133,9 +165,18 @@ impl SpiralVoyage {
     pub fn ship_world(&self, sea: &Sea) -> Option<usize> {
         sea.entity(self.ship?).map(|_| self.ship_world)
     }
+
+    /// Rebuild `view` from the ship's perspective.
+    fn refresh_view(&mut self, view: Perspective) {
+        for (i, &bearing) in self.cell_bearings.iter().enumerate() {
+            let world = &self.worlds[world_of(view.winding + angle_delta(view.bearing, bearing), view.worlds)];
+            self.view.charge[i] = world.charge.charge[i];
+            self.view.sea[i] = world.charge.sea[i];
+        }
+    }
 }
 
-/// Spawn the ship in World 1 and point the beam at it; the beam winds finitely over the voyage.
+/// Spawn the ship in World 1 and point the beam at it.
 pub fn populate(sv: &mut SpiralVoyage, sea: &mut Sea) {
     let id = sea.spawn("Wayfarer", Form::Ship, sv.start, sv.start_heading);
     sv.ship = Some(id);
@@ -145,10 +186,16 @@ pub fn populate(sv: &mut SpiralVoyage, sea: &mut Sea) {
     if let Some(e) = sea.entity_mut(id) {
         e.winding = start_winding;
     }
-    let worlds = sea.tuning.spiral_worlds as f32;
-    sea.beam.winding_limits = Some((SEAM, SEAM + worlds * TAU - 1e-3));
     sea.beam.winding = start_winding;
     sea.beam.range = sv.start.length().clamp(sea.tuning.beam_min_range(), sea.tuning.beam_max_range());
+    let view = sv.perspective(sea);
+    sv.refresh_view(view);
+}
+
+/// The beam lives on the ship's spiral neighbourhood: same bearing, winding within half a turn of
+/// the ship, so the world it reports is the one its light lands in.
+pub fn rebase_beam(view: Perspective, sea: &mut Sea) {
+    sea.beam.winding = view.winding + angle_delta(view.bearing, sea.beam.bearing());
 }
 
 /// Advance one step. Returns true when the voyage has ended.
@@ -156,17 +203,15 @@ pub fn step(sv: &mut SpiralVoyage, sea: &mut Sea, footprint: &Footprint, dt: f32
     let t = sea.tuning.clone();
     let n = sv.worlds.len();
 
-    // Only the inspected world is charged; every world decays.
-    let beam_world = sv.beam_world(sea);
+    // The beam charges whichever world each footprint cell belongs to from the ship; every
+    // world decays.
+    let view = sv.perspective(sea);
     for (i, w) in sv.worlds.iter_mut().enumerate() {
-        w.charge.step((i == beam_world).then_some(footprint), &t, dt);
-    }
-    if beam_world != sv.last_beam_world {
-        sv.last_beam_world = beam_world;
-        sea.events.push(Event::LayerChanged { layer: beam_world as u8 });
+        w.charge.step_where(Some(footprint), &t, dt, |p| view.world_at(p) == i);
     }
 
     let Some(ship_id) = sv.ship.or_else(|| sea.entities.iter().find(|e| e.form == Form::Ship).map(|e| e.id)) else {
+        sv.refresh_view(view);
         return true;
     };
     sv.ship = Some(ship_id);
@@ -179,12 +224,7 @@ pub fn step(sv: &mut SpiralVoyage, sea: &mut Sea, footprint: &Footprint, dt: f32
     let old_winding = sea.entities[idx].winding;
     let old_heading = sea.entities[idx].heading;
     {
-        let waters = SpiralWaters {
-            worlds: &sv.worlds,
-            ship_winding: old_winding,
-            ship_bearing: bearing_of(old_pos),
-            sea_radius: t.sea_radius,
-        };
+        let waters = SpiralWaters { worlds: &sv.worlds, view, sea_radius: t.sea_radius };
         let mut voyage_tuning = t.clone();
         voyage_tuning.ship_speed *= t.spiral_ship_speed_factor;
         steering::steer_ship(&mut sea.entities[idx], &waters, &voyage_tuning, dt);
@@ -200,7 +240,7 @@ pub fn step(sv: &mut SpiralVoyage, sea: &mut Sea, footprint: &Footprint, dt: f32
         ship.brain.desired = ship.heading;
     } else {
         ship.winding = new_winding;
-        // Cross a seam only once the hull is clearly past it (a seam has a width).
+        // Announce a crossing only once the hull is clearly past the seam.
         let upper = SEAM + (sv.ship_world + 1) as f32 * TAU + SEAM_BAND;
         let lower = SEAM + sv.ship_world as f32 * TAU - SEAM_BAND;
         if new_winding >= upper && sv.ship_world + 1 < n {
@@ -211,17 +251,26 @@ pub fn step(sv: &mut SpiralVoyage, sea: &mut Sea, footprint: &Footprint, dt: f32
             sea.events.push(Event::ShipCrossed { world: sv.ship_world as u8 });
         }
     }
+    let view = Perspective { winding: ship.winding, bearing: bearing_of(ship.pos), worlds: n };
+    rebase_beam(view, sea);
+    sv.refresh_view(view);
 
-    let ship_world = sv.ship_world;
     let harbor = sea.harbor();
     let hull = sea.entities[idx].circle();
-    if ship_world == n - 1 && harbor.contains(hull.center) {
+    if sv.ship_world == n - 1 && harbor.contains(hull.center) {
         sv.end = Some(VoyageEnd::Arrived);
         sea.secure(ship_id);
         sea.events.push(Event::VoyageArrived);
         return true;
     }
-    if let Some(rock) = sv.worlds[ship_world].rocks.iter().find(|r| r.overlaps(&hull)) {
+    // Grounding is against the land the ship sees: each rock in the world it resolves to.
+    let struck = sv
+        .worlds
+        .iter()
+        .enumerate()
+        .flat_map(|(i, w)| w.rocks.iter().map(move |r| (i, r)))
+        .find(|(i, r)| r.overlaps(&hull) && view.world_at(r.center) == *i);
+    if let Some((_, rock)) = struck {
         sea.entities[idx].status = Status::Sunk;
         sv.end = Some(VoyageEnd::Grounded(rock.center));
         sea.events.push(Event::Sunk { id: ship_id, pos: hull.center, cause: Cause::Rock });

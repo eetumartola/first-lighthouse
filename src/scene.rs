@@ -8,6 +8,7 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::light::{FogVolume, VolumetricFog, VolumetricLight};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
+use glam::Vec2;
 
 /// Baseline exposure for the night scene; `Settings::brightness` adds stops.
 const BASE_EV100: f32 = 6.6;
@@ -424,11 +425,14 @@ fn sync_session_scene(
     }
 
     if let Rules::SpiralVoyage(sv) = &world.rules {
-        // Each world's land exists as a hidden group; only the inspected world shows.
+        // Every world's land exists as a hidden group; each rock shows when the ship's view of
+        // the spiral resolves its position into its world.
         for (w, sw) in sv.worlds.iter().enumerate() {
             for rock in sw.rocks.iter().skip(1) {
                 let parent = spawn_rock(&mut commands, &mut meshes, &mats, *rock);
-                commands.entity(parent).insert((SessionScoped, WorldRocks(w), Visibility::Hidden));
+                commands
+                    .entity(parent)
+                    .insert((SessionScoped, WorldRocks { world: w, center: rock.center }, Visibility::Hidden));
             }
         }
         // The south seam, where a clockwise circuit passes into the next world.
@@ -461,7 +465,10 @@ struct EditMarker(usize);
 
 /// Spiral Voyage: land belonging to one world.
 #[derive(Component)]
-struct WorldRocks(usize);
+struct WorldRocks {
+    world: usize,
+    center: Vec2,
+}
 
 /// A rock as a small connected cluster of boulders filling its collision circle. Deterministic
 /// from the position so retries look identical.
@@ -665,12 +672,13 @@ fn update_weaver_markers(
     }
 }
 
-/// Spiral Voyage: only the inspected world's land is shown.
+/// Spiral Voyage: a rock shows when, seen from the ship, its position lies in its world. The
+/// seam therefore never changes appearance; the worlds only differ at the ship's antipode.
 fn update_world_rocks(session: Res<Session>, mut rocks: Query<(&WorldRocks, &mut Visibility)>) {
     let Some(world) = session.world() else { return };
-    let Rules::SpiralVoyage(_) = &world.rules else { return };
-    let inspected = world.inspected_world();
-    for (group, mut vis) in &mut rocks {
-        *vis = if group.0 == inspected { Visibility::Visible } else { Visibility::Hidden };
+    let Rules::SpiralVoyage(sv) = &world.rules else { return };
+    let view = sv.perspective(&world.sea);
+    for (rock, mut vis) in &mut rocks {
+        *vis = if view.world_at(rock.center) == rock.world { Visibility::Visible } else { Visibility::Hidden };
     }
 }

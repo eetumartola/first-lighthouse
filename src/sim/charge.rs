@@ -131,6 +131,12 @@ impl ChargeField {
 
     /// Charge under the footprint, then advance decay everywhere.
     pub fn step(&mut self, footprint: Option<&Footprint>, tuning: &Tuning, dt: f32) {
+        self.step_where(footprint, tuning, dt, |_| true);
+    }
+
+    /// `step`, charging only footprint cells whose centre satisfies `accept` (Spiral Voyage: the
+    /// cells that belong to this world as seen from the ship).
+    pub fn step_where(&mut self, footprint: Option<&Footprint>, tuning: &Tuning, dt: f32, accept: impl Fn(Vec2) -> bool) {
         if let Some(fp) = footprint {
             let (center, radius) = fp.bounds();
             let lo = ((center - Vec2::splat(radius) - self.origin) / self.cell).floor();
@@ -149,7 +155,8 @@ impl ChargeField {
                     if !self.sea[idx] {
                         continue;
                     }
-                    if fp.contains(self.cell_center(idx)) {
+                    let p = self.cell_center(idx);
+                    if fp.contains(p) && accept(p) {
                         let c = self.charge[idx];
                         let headroom = (1.0 - c / tuning.charge_cap).max(0.0);
                         self.charge[idx] = (c + (tuning.charge_rate * headroom + 1.0) * dt).min(tuning.charge_cap + dt);

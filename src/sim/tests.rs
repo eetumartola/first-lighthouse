@@ -320,61 +320,78 @@ fn spiral(w: &World) -> &spiral_voyage::SpiralVoyage {
 }
 
 #[test]
-fn spiral_beam_and_ship_can_be_in_different_worlds_and_charge_stays_local() {
+fn spiral_beam_charges_the_world_each_cell_resolves_to_from_the_ship() {
     let mut tuning = Tuning::default();
     tuning.spiral_ship_speed_factor = 0.0;
     let mut w = World::new(Mode::SpiralVoyage, tuning);
     skip_dusk(&mut w);
     let ship = spiral(&w).ship.unwrap();
-    let ship_world0 = w.entity_world(w.sea.entity(ship).unwrap());
-    assert_eq!(ship_world0, 0);
-    // Wind the beam a full circuit forward into World 2 and dwell there.
-    let t = w.tuning().clone();
-    for _ in 0..(t.beam_turn_seconds * 60.0) as usize + 60 {
-        w.step(Input { rotate: 1.0, ..Default::default() }, DT);
+    // Ship in World 1 just east of the south seam, bow west. Straight ahead across the seam is
+    // World 2 water; the open water east of the lighthouse behind it is still World 1.
+    {
+        let e = w.sea.entity_mut(ship).unwrap();
+        e.pos = Vec2::new(6.0, -40.0);
+        e.winding = winding_in_world(0, bearing_of(e.pos));
+        e.heading = 270f32.to_radians();
+        e.brain.desired = e.heading;
     }
-    assert_eq!(w.inspected_world(), 1);
-    // Resume the ship after the sweep: it still moves in its own world while World 2 is inspected.
-    w.sea.tuning.spiral_ship_speed_factor = 1.0;
-    let before = w.sea.entity(ship).unwrap().pos;
-    for _ in 0..(60 * 3) {
-        w.step(Input::default(), DT);
+    // (target, world its light must land in). Afterglow fades while the beam travels, so each
+    // target is checked right after its dwell.
+    let ahead = (Vec2::new(-6.0, -40.0), 1);
+    let behind = (Vec2::new(40.0, 0.0), 0);
+    for (target, lit_world) in [ahead, behind] {
+        for _ in 0..(60 * 20) {
+            w.step(autopilot::aim_at(&w, target), DT);
+            if w.footprint().contains(target) {
+                break;
+            }
+        }
+        assert!(w.footprint().contains(target), "beam never reached {target:?}");
+        for _ in 0..60 {
+            w.step(Input::default(), DT);
+        }
+        let sv = spiral(&w);
+        for (i, world) in sv.worlds.iter().enumerate() {
+            let c = world.charge.charge_at(target);
+            if i == lit_world {
+                assert!(c > 0.5, "world {} unlit at {target:?}", i + 1);
+            } else {
+                assert_eq!(c, 0.0, "world {} lit at {target:?}", i + 1);
+            }
+        }
+        // The composite the player sees is exactly the ship's reading of the spiral.
+        assert_eq!(w.view_charge().charge_at(target), sv.worlds[lit_world].charge.charge_at(target));
     }
-    let after = w.sea.entity(ship).unwrap().pos;
-    assert!(before.distance(after) > 5.0, "ship paused while the beam was elsewhere");
-    assert_eq!(w.entity_world(w.sea.entity(ship).unwrap()), 0, "ship teleported with the beam");
-    // Charge landed in World 2 only, at the footprint.
-    let fp = w.footprint();
-    let center = fp.center();
-    let sv = spiral(&w);
-    assert!(sv.worlds[1].charge.charge_at(center) > 5.0);
-    assert_eq!(sv.worlds[0].charge.charge_at(center), 0.0);
-    assert_eq!(sv.worlds[2].charge.charge_at(center), 0.0);
-    // The ship is hidden while another world is inspected.
-    assert_eq!(w.entity_visibility(w.sea.entity(ship).unwrap()), Visibility::Hidden);
+    // The ship is in the world on view whatever the beam does; only darkness can hide it.
+    let e = w.sea.entity(ship).unwrap();
+    assert_eq!(w.entity_world(e), w.inspected_world());
 }
 
 #[test]
-fn spiral_beam_winding_is_finite_and_never_wraps_back() {
-    let mut w = World::new(Mode::SpiralVoyage, Tuning::default());
-    skip_dusk(&mut w);
-    let t = w.tuning().clone();
-    // Beam-only check: keep the unguided ship where it started so the voyage cannot end.
-    let ship = w.sea.entities[0].id;
-    let start = w.sea.entities[0].pos;
-    let wind = |w: &mut World, rotate: f32| {
-        for _ in 0..(t.beam_turn_seconds * 60.0 * 6.0) as usize {
-            w.step(Input { rotate, ..Default::default() }, DT);
-            w.sea.entity_mut(ship).unwrap().pos = start;
+fn spiral_view_is_continuous_at_the_seam_and_differs_only_at_the_antipode() {
+    let w = World::new(Mode::SpiralVoyage, Tuning::default());
+    let n = w.tuning().spiral_worlds;
+    // Bearings run clockwise from north; a clockwise ship passes the south seam from 179° to 181°.
+    // Ship just before the seam in World 1.
+    let before = spiral_voyage::Perspective { winding: winding_in_world(0, 179f32.to_radians()), bearing: 179f32.to_radians(), worlds: n };
+    // Ship just after it in World 2.
+    let after = spiral_voyage::Perspective { winding: winding_in_world(1, 181f32.to_radians()), bearing: 181f32.to_radians(), worlds: n };
+    let r = 50.0;
+    for deg in (0..360).step_by(3) {
+        let p = geom::dir((deg as f32).to_radians()) * r;
+        let (a, b) = (before.world_at(p), after.world_at(p));
+        // Only positions within a few degrees of the ship's antipode (north) may disagree.
+        if geom::angle_delta(0.0, bearing_of(p)).abs() > 4f32.to_radians() {
+            assert_eq!(a, b, "view changed at bearing {deg} while the ship crossed the seam");
         }
-    };
-    wind(&mut w, 1.0);
-    assert_eq!(w.phase, Phase::Night);
-    assert_eq!(w.inspected_world(), t.spiral_worlds - 1);
-    assert!(w.sea.beam.winding < level::SEAM + t.spiral_worlds as f32 * TAU);
-    wind(&mut w, -1.0);
-    assert_eq!(w.inspected_world(), 0);
-    assert_eq!(w.sea.beam.winding, level::SEAM);
+    }
+    // Past the seam is the next world, before it the previous, for both observers.
+    let past_seam = geom::dir(181f32.to_radians()) * r;
+    let before_seam = geom::dir(179f32.to_radians()) * r;
+    assert_eq!(before.world_at(past_seam), 1);
+    assert_eq!(before.world_at(before_seam), 0);
+    assert_eq!(after.world_at(past_seam), 1);
+    assert_eq!(after.world_at(before_seam), 0);
 }
 
 #[test]
@@ -414,7 +431,6 @@ fn spiral_ship_crosses_the_seam_by_sailing_in_both_directions_with_continuous_mo
     }
     assert_eq!(crossed, vec![1], "crossing events: {crossed:?}");
     let e = w.sea.entity(ship).unwrap();
-    assert_eq!(world_of(e.winding, 4), 1);
     let continuous_limit =
         exit.length() * (spiral_voyage::SEAM_BAND + TAU / (2.0 * level::COLUMNS as f32)) + t.ship_length;
     assert!(e.pos.distance(exit) < continuous_limit, "position jumped at the seam: {:?}", e.pos);

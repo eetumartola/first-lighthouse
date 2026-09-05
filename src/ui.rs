@@ -347,7 +347,7 @@ fn update_hud(
             )
         }
         Rules::SpiralVoyage(sv) if matches!(world.phase, Phase::Night | Phase::Intro { .. }) => {
-            format!("Inspecting World {} of {}", world.inspected_world() + 1, sv.worlds.len())
+            format!("World {} of {}", world.inspected_world() + 1, sv.worlds.len())
         }
         _ => String::new(),
     };

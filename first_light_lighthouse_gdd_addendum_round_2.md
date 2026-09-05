@@ -256,7 +256,7 @@ This crossing rule is a prototype choice to test, not a commitment that every la
 
 Each world has its own geometry and stored plankton charge. Light painted at a particular bearing and radius in World 2 must not also charge that position in Worlds 1, 3 and 4.
 
-Only the inspected world is visible through the spotlight and its local afterglow. The other worlds keep their state and continue simulating/decaying. No off-world ship marker or heading line should reveal the vessel's exact current position.
+The sea on view is the spiral as seen from the ship: water and land ahead of the vessel past the seam already belong to the next world, water behind it before the seam to the previous one. The seam itself therefore never changes appearance as the ship approaches or crosses it; the two worlds differ only at the ship's antipode. The spotlight charges whichever world each lit cell resolves to from the ship. The other worlds keep their state and continue decaying.
 
 At the winding seam, light sampling, guidance and collision must recognize the adjacent world's water correctly. Handle the local neighborhood across the seam rather than duplicating actors, jumping between colliders or leaking charge between unrelated layers.
 

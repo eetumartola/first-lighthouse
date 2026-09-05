@@ -81,9 +81,9 @@ impl Mode {
                  sector's land into World 1. At dawn a ship enters from the marked lane and must find any passage to the harbor."
             }
             Mode::SpiralVoyage => {
-                "Paint glowing water ahead of your ship exactly as in Night Watch; a full clockwise circuit of the beam \
-                 winds into the next world, and the ship crosses the same seam by sailing over it. \
-                 Bring it through Worlds 1 to 4 to the harbor in World 4."
+                "Paint glowing water ahead of your ship exactly as in Night Watch. The sea is a spiral: each clockwise \
+                 pass of the south seam is the next world, and the water ahead of the ship already belongs to it. \
+                 Bring the ship through Worlds 1 to 4 to the harbor in World 4."
             }
         }
     }
@@ -139,7 +139,7 @@ pub enum Event {
     Transformed { id: EntityId, pos: Vec2, from: Form, to: Form },
     Bell { pos: Vec2 },
     CreatureCall { pos: Vec2 },
-    /// The inspected world changed (World Weaver browsing, Spiral Voyage beam winding).
+    /// The inspected world changed (World Weaver browsing).
     LayerChanged { layer: u8 },
     /// World Weaver: a sector's land was copied into World 1 from `layer`.
     Captured { sector: usize, layer: u8 },
@@ -407,19 +407,20 @@ impl World {
         }
     }
 
-    /// Index of the world the beam currently inspects (0 outside the layered modes).
+    /// Index of the world in focus: World Weaver's inspected layer, the Spiral Voyage ship's
+    /// world (0 elsewhere).
     pub fn inspected_world(&self) -> usize {
         match &self.rules {
             Rules::WorldWeaver(ww) => ww.layer_for(&self.sea) as usize,
-            Rules::SpiralVoyage(sv) => sv.beam_world(&self.sea),
+            Rules::SpiralVoyage(sv) => sv.ship_world,
             _ => 0,
         }
     }
 
-    /// The charge field the presentation should draw: the inspected world's.
+    /// The charge field the presentation should draw: the spiral's composite seen from the ship.
     pub fn view_charge(&self) -> &ChargeField {
         match &self.rules {
-            Rules::SpiralVoyage(sv) => &sv.worlds[self.inspected_world()].charge,
+            Rules::SpiralVoyage(sv) => &sv.view,
             _ => &self.sea.charge,
         }
     }
@@ -439,6 +440,9 @@ impl World {
             Phase::Intro { elapsed } => {
                 // Dusk: aim freely; nothing moves and no charge accumulates until dark.
                 self.sea.beam.update(input, &self.sea.tuning, dt);
+                if let Rules::SpiralVoyage(sv) = &self.rules {
+                    spiral_voyage::rebase_beam(sv.perspective(&self.sea), &mut self.sea);
+                }
                 let elapsed = elapsed + dt;
                 if elapsed >= self.sea.tuning.intro_seconds {
                     self.phase = Phase::Night;
