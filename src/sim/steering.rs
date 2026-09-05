@@ -96,7 +96,11 @@ pub fn steer_ship(e: &mut Entity, waters: &impl Waters, t: &Tuning, dt: f32) {
         for i in 0..CANDIDATES {
             let offset = -half_arc + step * i as f32;
             let heading = (e.heading + offset).rem_euclid(std::f32::consts::TAU);
-            let Some(c) = corridor(e.pos, heading, waters, t) else { continue };
+            let Some(mut c) = corridor(e.pos, heading, waters, t) else { continue };
+            // Turning costs way: light off the bow is worth less than the same light ahead, so a
+            // patch passing abeam does not pull the ship round into an orbit.
+            let turn = (offset / half_arc).abs();
+            c.score *= 1.0 - t.guidance_turn_penalty * turn * turn;
             if best.is_none_or(|(b, _)| c.score > b.score) {
                 best = Some((c, heading));
             }
@@ -135,6 +139,11 @@ pub fn steer_ship(e: &mut Entity, waters: &impl Waters, t: &Tuning, dt: f32) {
             e.brain.challenger_for = 0.0;
         }
         // Nothing useful anywhere ahead: hold the last accepted heading.
+    }
+    // The sea has an edge: a ship drifting out in the dark comes about toward the lighthouse
+    // rather than sailing off the map.
+    if e.pos.length() > t.sea_radius - t.ship_length && dir(e.heading).dot(e.pos) > 0.0 {
+        e.brain.desired = bearing_of(-e.pos);
     }
     e.heading = turn_toward(e.heading, e.brain.desired, t.ship_turn_rate_deg.to_radians() * dt);
     e.pos += dir(e.heading) * t.ship_speed * dt;

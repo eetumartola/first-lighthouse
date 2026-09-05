@@ -62,6 +62,9 @@ pub struct Tuning {
     pub guidance_switch_advantage: f32,
     /// Seconds a better direction must keep winning before it displaces a live incumbent.
     pub guidance_dwell: f32,
+    /// Fraction of a corridor's score lost at the edge of the arc (quadratic toward the bow):
+    /// turning costs way, so light abeam is worth less than the same light ahead.
+    pub guidance_turn_penalty: f32,
     /// Corridor score below which a direction is not considered useful illumination.
     pub guidance_min_score: f32,
     /// Light that ends closer than this many ship lengths ahead is a patch being passed, not a
@@ -149,16 +152,17 @@ impl Default for Tuning {
             strong_threshold: 5.0,
             silhouette_min_glow: 1.0,
 
-            ship_speed: 2.0,
+            ship_speed: 4.0,
             ship_length: 3.0,
             ship_radius: 1.6,
-            ship_turn_rate_deg: 30.0,
+            ship_turn_rate_deg: 40.0,
             guidance_arc_deg: 150.0,
             guidance_lookahead_lengths: 6.0,
             guidance_hz: 15.0,
             guidance_dwell: 0.5,
             guidance_switch_advantage: 0.2,
             guidance_min_score: 4.0,
+            guidance_turn_penalty: 0.6,
             guidance_min_reach_lengths: 2.0,
             guidance_obstacle_rejection: true,
             guidance_obstacle_lengths: 1.5,
@@ -190,7 +194,7 @@ impl Default for Tuning {
             weaver_capture_glow: 9.0,
 
             spiral_worlds: 4,
-            spiral_ship_speed_factor: 1.4,
+            spiral_ship_speed_factor: 1.0,
         }
     }
 }
