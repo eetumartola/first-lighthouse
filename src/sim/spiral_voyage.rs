@@ -27,10 +27,16 @@ pub enum VoyageEnd {
     Grounded(Vec2),
 }
 
+/// Angular half-width of a seam: the ship's world only changes once its winding is this far past
+/// the seam, so a hull straddling it while turning cannot flip worlds twice.
+pub const SEAM_BAND: f32 = 0.05;
+
 #[derive(Clone, Debug)]
 pub struct SpiralVoyage {
     pub worlds: Vec<SpiralWorld>,
     pub ship: Option<EntityId>,
+    /// The world the ship is in: follows its winding with `SEAM_BAND` hysteresis.
+    pub ship_world: usize,
     pub start: Vec2,
     pub start_heading: f32,
     pub last_beam_world: usize,
@@ -115,6 +121,7 @@ impl SpiralVoyage {
         Self {
             worlds,
             ship: None,
+            ship_world: 0,
             start: p(300.0, 40.0),
             start_heading: 30f32.to_radians(),
             last_beam_world: 0,
@@ -127,8 +134,7 @@ impl SpiralVoyage {
     }
 
     pub fn ship_world(&self, sea: &Sea) -> Option<usize> {
-        let e = sea.entity(self.ship?)?;
-        Some(world_of(e.winding, self.worlds.len()))
+        sea.entity(self.ship?).map(|_| self.ship_world)
     }
 }
 
@@ -137,6 +143,7 @@ pub fn populate(sv: &mut SpiralVoyage, sea: &mut Sea) {
     let id = sea.spawn("Wayfarer", Form::Ship, sv.start, sv.start_heading);
     sv.ship = Some(id);
     let start_winding = bearing_of(sv.start);
+    sv.ship_world = world_of(start_winding, sv.worlds.len());
     if let Some(e) = sea.entity_mut(id) {
         e.winding = start_winding;
     }
@@ -193,15 +200,20 @@ pub fn step(sv: &mut SpiralVoyage, sea: &mut Sea, footprint: &Footprint, dt: f32
         ship.heading = turn_toward(old_heading, bearing_of(-old_pos), t.ship_turn_rate_deg.to_radians() * dt);
         ship.brain.desired = ship.heading;
     } else {
-        let before = world_of(old_winding, n);
         ship.winding = new_winding;
-        let after = world_of(new_winding, n);
-        if after != before {
-            sea.events.push(Event::ShipCrossed { world: after as u8 });
+        // Cross a seam only once the hull is clearly past it (a seam has a width).
+        let upper = (sv.ship_world + 1) as f32 * TAU + SEAM_BAND;
+        let lower = sv.ship_world as f32 * TAU - SEAM_BAND;
+        if new_winding >= upper && sv.ship_world + 1 < n {
+            sv.ship_world += 1;
+            sea.events.push(Event::ShipCrossed { world: sv.ship_world as u8 });
+        } else if new_winding < lower && sv.ship_world > 0 {
+            sv.ship_world -= 1;
+            sea.events.push(Event::ShipCrossed { world: sv.ship_world as u8 });
         }
     }
 
-    let ship_world = world_of(sea.entities[idx].winding, n);
+    let ship_world = sv.ship_world;
     let harbor = sea.harbor();
     let hull = sea.entities[idx].circle();
     if ship_world == n - 1 && harbor.contains(hull.center) {

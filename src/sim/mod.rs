@@ -430,6 +430,7 @@ impl World {
     /// World index an entity currently occupies.
     pub fn entity_world(&self, e: &Entity) -> usize {
         match &self.rules {
+            Rules::SpiralVoyage(sv) if sv.ship == Some(e.id) => sv.ship_world,
             Rules::SpiralVoyage(_) => spiral_voyage::world_of(e.winding, self.sea.tuning.spiral_worlds),
             _ => 0,
         }
