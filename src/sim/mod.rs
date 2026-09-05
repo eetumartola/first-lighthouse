@@ -5,6 +5,7 @@
 
 pub mod autopilot;
 pub mod beam;
+pub mod level;
 pub mod charge;
 pub mod entity;
 pub mod geom;
@@ -93,7 +94,7 @@ impl Mode {
             Mode::NightWatch => "Paint glowing routes ahead of ships and bring them to the northern harbor.",
             Mode::MutableSea => "Your light holds a form still; darkness changes it. Bring 2 of 3 home as ships.",
             Mode::WorldWeaver => "Copy sectors from Worlds 2 to 4 into World 1 until the lane connects to the harbor.",
-            Mode::SpiralVoyage => "Guide the ship across the north seam through all four worlds to the harbor in World 4.",
+            Mode::SpiralVoyage => "Guide the ship across the south seam through all four worlds to the harbor in World 4.",
         }
     }
 

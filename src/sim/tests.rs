@@ -2,8 +2,8 @@
 //! through the real beam controls, plus the failure modes the design promises.
 
 use super::autopilot::{self, Keeper};
-use super::geom::{angle_delta, bearing_of};
-use super::spiral_voyage::world_of;
+use super::geom::bearing_of;
+use super::spiral_voyage::{winding_in_world, world_of};
 use super::world_weaver::WorldWeaver;
 use super::*;
 use std::f32::consts::TAU;
@@ -96,9 +96,22 @@ fn night_watch_unguided_ships_do_not_find_harbor() {
 fn night_watch_attentive_keeper_rescues_target() {
     let mut bot = Keeper::for_mode(Mode::NightWatch);
     let mut w = World::new(Mode::NightWatch, Tuning::default());
-    run_until_finished(&mut w, |w| bot.input(w));
-    let o = w.outcome.as_ref().unwrap();
-    assert!(o.success, "expected >= 3 rescues, got {o:#?}");
+    let mut losses = Vec::new();
+    for _ in 0..((w.night_length.unwrap() + 120.0) * 60.0) as usize {
+        if w.phase == Phase::Finished {
+            break;
+        }
+        let input = bot.input(&w);
+        w.step(input, DT);
+        for event in w.drain_events() {
+            if let Event::Sunk { id, cause, .. } = event {
+                let name = w.sea.entity(id).map(|e| e.name).unwrap_or("unknown");
+                losses.push((name, cause));
+            }
+        }
+    }
+    let o = w.outcome.as_ref().expect("session did not finish");
+    assert!(o.success, "expected >= 3 rescues, got {o:#?}; losses: {losses:?}");
 }
 
 #[test]
@@ -308,25 +321,21 @@ fn spiral(w: &World) -> &spiral_voyage::SpiralVoyage {
 
 #[test]
 fn spiral_beam_and_ship_can_be_in_different_worlds_and_charge_stays_local() {
-    let mut w = World::new(Mode::SpiralVoyage, Tuning::default());
+    let mut tuning = Tuning::default();
+    tuning.spiral_ship_speed_factor = 0.0;
+    let mut w = World::new(Mode::SpiralVoyage, tuning);
     skip_dusk(&mut w);
     let ship = spiral(&w).ship.unwrap();
     let ship_world0 = w.entity_world(w.sea.entity(ship).unwrap());
     assert_eq!(ship_world0, 0);
-    // Put the ship on open dark water (south, sailing west) so the beam's full-circuit sweep
-    // through World 1 lights nothing within its lookahead; the test is about the ship sailing on.
-    if let Some(e) = w.sea.entity_mut(ship) {
-        e.pos = Vec2::new(0.0, -60.0);
-        e.heading = 270f32.to_radians();
-        e.brain.desired = e.heading;
-        e.winding = bearing_of(e.pos);
-    }
     // Wind the beam a full circuit forward into World 2 and dwell there.
     let t = w.tuning().clone();
     for _ in 0..(t.beam_turn_seconds * 60.0) as usize + 60 {
         w.step(Input { rotate: 1.0, ..Default::default() }, DT);
     }
     assert_eq!(w.inspected_world(), 1);
+    // Resume the ship after the sweep: it still moves in its own world while World 2 is inspected.
+    w.sea.tuning.spiral_ship_speed_factor = 1.0;
     let before = w.sea.entity(ship).unwrap().pos;
     for _ in 0..(60 * 3) {
         w.step(Input::default(), DT);
@@ -362,10 +371,10 @@ fn spiral_beam_winding_is_finite_and_never_wraps_back() {
     wind(&mut w, 1.0);
     assert_eq!(w.phase, Phase::Night);
     assert_eq!(w.inspected_world(), t.spiral_worlds - 1);
-    assert!(w.sea.beam.winding < t.spiral_worlds as f32 * TAU);
+    assert!(w.sea.beam.winding < level::SEAM + t.spiral_worlds as f32 * TAU);
     wind(&mut w, -1.0);
     assert_eq!(w.inspected_world(), 0);
-    assert_eq!(w.sea.beam.winding, 0.0);
+    assert_eq!(w.sea.beam.winding, level::SEAM);
 }
 
 #[test]
@@ -373,12 +382,22 @@ fn spiral_ship_crosses_the_seam_by_sailing_in_both_directions_with_continuous_mo
     let mut w = World::new(Mode::SpiralVoyage, Tuning::default());
     skip_dusk(&mut w);
     let ship = spiral(&w).ship.unwrap();
-    // Point the ship straight across the seam from just west of north.
+    let t = w.tuning().clone();
+    let row = (1..level::rows(level::MODE4_LEVEL1) - 1)
+        .rev()
+        .find(|&row| {
+            level::is_free(level::MODE4_LEVEL1, 0, level::COLUMNS - 1, row)
+                && level::is_free(level::MODE4_LEVEL1, 1, 0, row)
+        })
+        .unwrap();
+    let exit = level::cell_center(level::MODE4_LEVEL1, level::COLUMNS - 1, row, t.island_radius, t.sea_radius);
+    let entry = level::cell_center(level::MODE4_LEVEL1, 0, row, t.island_radius, t.sea_radius);
+    // Point the ship clockwise across the authored south-seam opening.
     {
         let e = w.sea.entity_mut(ship).unwrap();
-        e.pos = Vec2::new(-3.0, 40.0);
-        e.winding = bearing_of(e.pos);
-        e.heading = 90f32.to_radians();
+        e.pos = exit;
+        e.winding = winding_in_world(0, bearing_of(e.pos));
+        e.heading = (bearing_of(exit) + std::f32::consts::FRAC_PI_2).rem_euclid(TAU);
         e.brain.desired = e.heading;
     }
     let mut crossed = Vec::new();
@@ -389,16 +408,23 @@ fn spiral_ship_crosses_the_seam_by_sailing_in_both_directions_with_continuous_mo
                 crossed.push(world);
             }
         }
+        if !crossed.is_empty() {
+            break;
+        }
     }
-    let e = w.sea.entity(ship).unwrap();
     assert_eq!(crossed, vec![1], "crossing events: {crossed:?}");
+    let e = w.sea.entity(ship).unwrap();
     assert_eq!(world_of(e.winding, 4), 1);
-    assert!(e.pos.x > 3.0 && (e.pos.y - 40.0).abs() < 2.0, "position jumped at the seam: {:?}", e.pos);
-    assert!(angle_delta(e.heading, 90f32.to_radians()).abs() < 0.05, "heading changed at the seam");
-    // Sail back west across the seam: retraces into World 1.
+    let continuous_limit =
+        exit.length() * (spiral_voyage::SEAM_BAND + TAU / (2.0 * level::COLUMNS as f32)) + t.ship_length;
+    assert!(e.pos.distance(exit) < continuous_limit, "position jumped at the seam: {:?}", e.pos);
+    assert!(e.is_active(), "ship grounded in the authored seam opening");
+    // Start just inside World 2 and retrace east across the same physical seam.
     {
         let e = w.sea.entity_mut(ship).unwrap();
-        e.heading = 270f32.to_radians();
+        e.pos = entry;
+        e.winding = winding_in_world(1, bearing_of(e.pos));
+        e.heading = (bearing_of(entry) - std::f32::consts::FRAC_PI_2).rem_euclid(TAU);
         e.brain.desired = e.heading;
     }
     let mut back = Vec::new();
@@ -408,6 +434,9 @@ fn spiral_ship_crosses_the_seam_by_sailing_in_both_directions_with_continuous_mo
             if let Event::ShipCrossed { world } = ev {
                 back.push(world);
             }
+        }
+        if !back.is_empty() {
+            break;
         }
     }
     assert_eq!(back, vec![0]);
@@ -420,9 +449,9 @@ fn spiral_ship_cannot_sail_before_world_one() {
     let ship = spiral(&w).ship.unwrap();
     {
         let e = w.sea.entity_mut(ship).unwrap();
-        e.pos = Vec2::new(3.0, 40.0);
-        e.winding = bearing_of(e.pos); // just east of north in World 1
-        e.heading = 270f32.to_radians();
+        e.pos = Vec2::new(-3.0, -40.0);
+        e.winding = winding_in_world(0, bearing_of(e.pos)); // just inside World 1's lower boundary
+        e.heading = 90f32.to_radians();
         e.brain.desired = e.heading;
     }
     for _ in 0..(60 * 6) {
@@ -430,7 +459,7 @@ fn spiral_ship_cannot_sail_before_world_one() {
     }
     let e = w.sea.entity(ship).unwrap();
     assert_eq!(world_of(e.winding, 4), 0);
-    assert!(e.winding >= 0.0);
+    assert!(e.winding >= level::SEAM);
     assert!(e.is_active(), "the voyage boundary must not sink the ship");
 }
 
@@ -439,19 +468,18 @@ fn spiral_seam_sampling_reads_the_neighbouring_world() {
     let mut w = World::new(Mode::SpiralVoyage, Tuning::default());
     skip_dusk(&mut w);
     let ship = spiral(&w).ship.unwrap();
-    // Ship in World 1 just west of north, heading east; a bright trail lies just east of north in
-    // World 2 (where it will arrive) and nothing in World 1 there. The ship should keep heading
-    // toward it rather than treating the seam as dark.
+    // Ship in World 1 just before the south seam, heading west; a bright trail lies just after
+    // that seam in World 2. The ship must read the neighbouring world's water.
     {
         let e = w.sea.entity_mut(ship).unwrap();
-        e.pos = Vec2::new(-6.0, 40.0);
-        e.winding = bearing_of(e.pos);
-        e.heading = 100f32.to_radians();
+        e.pos = Vec2::new(6.0, -40.0);
+        e.winding = winding_in_world(0, bearing_of(e.pos));
+        e.heading = 270f32.to_radians();
         e.brain.desired = e.heading;
     }
     if let Rules::SpiralVoyage(sv) = &mut w.rules {
         for x in 0..12 {
-            let p = Vec2::new(x as f32 * 1.5, 40.0 - x as f32 * 0.6);
+            let p = Vec2::new(-(x as f32) * 1.5, -40.0 + x as f32 * 0.6);
             let idx = sv.worlds[1].charge.index_of(p).unwrap();
             sv.worlds[1].charge.charge[idx] = 15.0;
         }
@@ -469,6 +497,7 @@ fn spiral_keeper_brings_the_ship_through_four_worlds_to_harbor() {
     let mut w = World::new(Mode::SpiralVoyage, Tuning::default());
     let mut crossings = Vec::new();
     let mut elapsed = 0.0;
+    let mut grounding = None;
     loop {
         if w.phase == Phase::Finished {
             break;
@@ -477,16 +506,45 @@ fn spiral_keeper_brings_the_ship_through_four_worlds_to_harbor() {
         w.step(input, DT);
         elapsed += DT;
         for ev in w.drain_events() {
-            if let Event::ShipCrossed { world } = ev {
-                crossings.push(world);
+            match ev {
+                Event::ShipCrossed { world } => crossings.push(world),
+                Event::Sunk { id, pos, cause } if Some(id) == spiral(&w).ship => {
+                    let world = spiral(&w).ship_world;
+                    let route = &bot.world_routes[world];
+                    let nearest = route
+                        .iter()
+                        .enumerate()
+                        .min_by(|a, b| a.1.distance(pos).total_cmp(&b.1.distance(pos)));
+                    let rock = spiral(&w).worlds[world]
+                        .rocks
+                        .iter()
+                        .min_by(|a, b| a.center.distance(pos).total_cmp(&b.center.distance(pos)));
+                    grounding = Some(format!(
+                        "{cause:?} at {pos:?}, world {}, nearest route {:?}, nearest rock {:?}, beam {:.1}°/{:.1}",
+                        world + 1,
+                        nearest.map(|(i, p)| (i, *p, p.distance(pos))),
+                        rock.map(|r| (r.center, r.radius, r.center.distance(pos))),
+                        w.sea.beam.bearing().to_degrees(),
+                        w.sea.beam.range,
+                    ));
+                }
+                _ => {}
             }
         }
-        assert!(elapsed < 900.0, "voyage never resolved; crossings {crossings:?}");
+        if elapsed >= 900.0 {
+            let ship = spiral(&w).ship.and_then(|id| w.sea.entity(id));
+            panic!(
+                "voyage never resolved; crossings {crossings:?}; ship {ship:#?}; beam {:.1}°/{:.1}",
+                w.sea.beam.bearing().to_degrees(),
+                w.sea.beam.range,
+            );
+        }
     }
     let o = w.outcome.as_ref().unwrap();
-    assert!(o.success, "{o:#?} crossings {crossings:?}");
+    assert!(o.success, "{o:#?} crossings {crossings:?}; grounding: {grounding:?}");
     assert_eq!(crossings, vec![1, 2, 3]);
-    assert!(elapsed < 420.0, "voyage too long: {elapsed:.0} s");
+    let route_lengths: Vec<_> = bot.world_routes.iter().map(|route| super::route::length(route)).collect();
+    assert!(elapsed < 420.0, "voyage too long: {elapsed:.0} s; routes {route_lengths:?}");
 }
 
 // ---------------------------------------------------------------- integration

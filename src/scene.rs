@@ -431,17 +431,19 @@ fn sync_session_scene(
                 commands.entity(parent).insert((SessionScoped, WorldRocks(w), Visibility::Hidden));
             }
         }
-        // The north seam, where a circuit passes into the next world.
+        // The south seam, where a clockwise circuit passes into the next world.
+        let seam_length = t.sea_radius - t.island_radius - 4.0;
+        let seam_center = sim::geom::dir(sim::level::SEAM) * (t.island_radius + 2.0 + seam_length * 0.5);
         commands.spawn((
             SessionScoped,
-            Mesh3d(meshes.add(Cuboid::new(0.3, 0.1, t.sea_radius - t.island_radius - 4.0))),
+            Mesh3d(meshes.add(Cuboid::new(0.3, 0.1, seam_length))),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: Color::srgb(0.8, 0.9, 1.0),
                 emissive: LinearRgba::new(0.4, 0.55, 0.9, 1.0),
                 unlit: true,
                 ..default()
             })),
-            Transform::from_xyz(0.0, 0.08, -(t.island_radius + 2.0 + (t.sea_radius - t.island_radius - 4.0) * 0.5)),
+            Transform::from_translation(to_world_h(seam_center, 0.08)),
         ));
     }
 }

@@ -135,7 +135,7 @@ fn global_hotkeys(keys: Res<ButtonInput<KeyCode>>, mut settings: ResMut<Settings
     }
 }
 
-/// `FIRST_LIGHT_AUTOPLAY=nightwatch|mutablesea|worldweaver` starts that mode on the autopilot.
+/// `FIRST_LIGHT_AUTOPLAY=nightwatch|mutablesea|worldweaver|spiralvoyage` starts that mode on the autopilot.
 fn autoplay_from_env(
     mut settings: ResMut<Settings>,
     mut session: ResMut<Session>,

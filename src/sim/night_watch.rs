@@ -3,7 +3,6 @@
 
 use super::entity::{Form, Status};
 use super::geom::Circle;
-use super::islands;
 use super::steering;
 use super::tuning::Tuning;
 use super::{Cause, Event, Outcome, Sea};
@@ -27,18 +26,14 @@ pub struct NightWatch {
 }
 
 impl NightWatch {
-    /// Fixed scenario: overlapping arrivals; a north reef, an eastern islet with a tail, a line of
-    /// south-western skerries and a south-eastern rock pair shape the approaches. The harbor sits
-    /// north of the lighthouse; the reef makes ships from the north round it either way.
-    pub fn scenario(_t: &Tuning) -> (Self, Vec<Circle>) {
-        let rocks = islands::land(vec![
-            islands::arc(46.0, -20.0, 20.0, 3.5),
-            islands::islet(Vec2::new(40.0, 18.0), 6.0),
-            islands::chain(Vec2::new(46.0, 13.0), Vec2::new(4.0, -2.5), 3, 3.0),
-            islands::chain(Vec2::new(-48.0, -34.0), Vec2::new(4.5, -4.5), 5, 3.2),
-            islands::islet(Vec2::new(24.0, -46.0), 4.0),
-            vec![Circle::new(Vec2::new(32.0, -40.0), 3.0), Circle::new(Vec2::new(-55.0, 14.0), 4.0)],
-        ]);
+    /// Scenario from the authored level: `assets/levels/mode1_level1.txt` is a polar ASCII map
+    /// (columns = bearing from south clockwise, rows = radius bands, bottom row = the island).
+    /// Arrival bearings spread around the sea; the harbor north of the lighthouse is kept clear.
+    pub fn scenario(t: &Tuning) -> (Self, Vec<Circle>) {
+        let rocks = super::level::parse(super::level::MODE1_LEVEL1, t.island_radius, t.sea_radius)
+            .into_iter()
+            .next()
+            .unwrap_or_default();
         let schedule = vec![
             Arrival { time: 0.0, name: "Alder", pos: Vec2::new(0.0, 95.0), heading_deg: 180.0 },
             Arrival { time: 0.0, name: "Brant", pos: Vec2::new(95.0, 8.0), heading_deg: 270.0 },

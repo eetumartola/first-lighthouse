@@ -10,11 +10,14 @@ use glam::Vec2;
 pub struct ChargeField {
     pub size: usize,
     pub cell: f32,
+    pub sea_radius: f32,
     pub origin: Vec2,
     /// Remaining afterglow per cell in seconds.
     pub charge: Vec<f32>,
     /// False for land or cells outside the sea.
     pub sea: Vec<bool>,
+    /// Exact collision geometry used by hull-aware guidance; the grid remains for light sampling.
+    pub land: Vec<Circle>,
 }
 
 impl ChargeField {
@@ -32,10 +35,12 @@ impl ChargeField {
         }
         Self {
             size,
+            sea_radius: tuning.sea_radius,
             cell: tuning.cell_size,
             origin,
             charge: vec![0.0; size * size],
             sea,
+            land: land.to_vec(),
         }
     }
 
@@ -62,9 +67,6 @@ impl ChargeField {
         self.charge_at(p) >= tuning.strong_threshold
     }
 
-    pub fn is_land(&self, p: Vec2) -> bool {
-        self.index_of(p).is_some_and(|i| !self.sea[i])
-    }
 
     /// Strongest glow touching a silhouette: the centre plus four points on its radius.
     pub fn glow_around(&self, center: Vec2, radius: f32) -> f32 {

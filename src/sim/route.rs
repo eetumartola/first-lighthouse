@@ -1,6 +1,6 @@
 //! Grid route finder for World Weaver's dawn playback. Land is inflated by the hull clearance so
 //! a point path is a hull path; the result is simplified with clearance-checked line of sight.
-//! Modes 1 and 4 never use this: their ships read light.
+//! World Weaver playback and the developer keeper use this; gameplay ships still read only light.
 
 use super::geom::Circle;
 use glam::Vec2;

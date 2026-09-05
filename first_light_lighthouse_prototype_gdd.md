@@ -305,7 +305,7 @@ Keep track of the beam's total winding, not just its compass bearing. Continuing
 
 **Prototype default:** Four authored layers repeat cyclically. There is no endless generation. Revisiting a layer always shows exactly the same candidate state.
 
-Use a fixed, legible seam at north where the winding advances to the next layer. Put this seam on a sector boundary so the active preview never straddles it. Do not swap the whole visible ocean when crossing it; only the active preview slice changes. A subtle sound and a small layer glyph communicate the transition.
+Use a fixed, legible seam at south where the winding advances to the next layer. Put this seam on a sector boundary so the active preview never straddles it. Do not swap the whole visible ocean when crossing it; only the active preview slice changes. A subtle sound and a small layer glyph communicate the transition.
 
 Reversing direction is navigation through possibilities. It does not, by itself, edit the assembled world.
 

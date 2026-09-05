@@ -33,20 +33,6 @@ pub fn arc(r: f32, from_deg: f32, to_deg: f32, rock_radius: f32) -> Vec<Circle> 
         .collect()
 }
 
-/// A small island: one large rock with three satellites, giving an irregular coastline.
-pub fn islet(center: Vec2, radius: f32) -> Vec<Circle> {
-    vec![
-        Circle::new(center, radius),
-        Circle::new(center + Vec2::new(radius * 0.8, radius * 0.2), radius * 0.55),
-        Circle::new(center + Vec2::new(-radius * 0.5, radius * 0.7), radius * 0.5),
-        Circle::new(center + Vec2::new(-radius * 0.2, -radius * 0.85), radius * 0.45),
-    ]
-}
-
-/// Concatenate clusters into one land list.
-pub fn land(clusters: Vec<Vec<Circle>>) -> Vec<Circle> {
-    clusters.into_iter().flatten().collect()
-}
 
 #[cfg(test)]
 mod tests {
@@ -62,10 +48,6 @@ mod tests {
         let ch = radial(90.0, 30.0, 4, 4.5, 2.5);
         for pair in ch.windows(2) {
             assert!(pair[0].overlaps(&pair[1]));
-        }
-        let isle = islet(Vec2::new(10.0, 10.0), 6.0);
-        for satellite in &isle[1..] {
-            assert!(isle[0].overlaps(satellite));
         }
     }
 }

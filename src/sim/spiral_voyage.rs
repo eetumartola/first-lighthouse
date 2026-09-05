@@ -1,11 +1,12 @@
 //! Variant 4 — Spiral Voyage: one ship, four persistent worlds arranged along the beam's
-//! winding. A clockwise circuit past the north seam enters the next world. The beam and the ship
+//! winding. A clockwise circuit past the south seam enters the next world. The beam and the ship
 //! each keep their own winding, so the player can scout ahead while the vessel sails on.
 
 use super::beam::Footprint;
 use super::charge::ChargeField;
 use super::entity::{EntityId, Form, Status};
-use super::geom::{angle_delta, bearing_of, compass_word, dir, turn_toward, Circle};
+use super::geom::{angle_delta, bearing_of, compass_word, turn_toward, Circle};
+use super::level::SEAM;
 use super::islands;
 use super::steering::{self, Waters};
 use super::tuning::Tuning;
@@ -29,7 +30,7 @@ pub enum VoyageEnd {
 
 /// Angular half-width of a seam: the ship's world only changes once its winding is this far past
 /// the seam, so a hull straddling it while turning cannot flip worlds twice.
-pub const SEAM_BAND: f32 = 0.05;
+pub const SEAM_BAND: f32 = 1.5 * TAU / super::level::COLUMNS as f32;
 
 #[derive(Clone, Debug)]
 pub struct SpiralVoyage {
@@ -43,17 +44,23 @@ pub struct SpiralVoyage {
     pub end: Option<VoyageEnd>,
 }
 
-/// World index of an unwrapped angle, clamped to the finite voyage.
+/// The seam sits in the south; column 0 of an authored level block is south. A world's windings
+/// are `[SEAM + k·TAU, SEAM + (k+1)·TAU)`.
 pub fn world_of(winding: f32, worlds: usize) -> usize {
-    ((winding / TAU).floor().max(0.0) as usize).min(worlds - 1)
+    (((winding - SEAM) / TAU).floor().max(0.0) as usize).min(worlds - 1)
 }
 
+/// A bearing as an absolute winding inside world `k`: `world_of` of the result is `k`.
+pub fn winding_in_world(k: usize, bearing: f32) -> f32 {
+    bearing + TAU * (k as f32 + if bearing < SEAM { 1.0 } else { 0.0 })
+}
 /// Light and land as seen from a ship at a given winding: positions near the seam resolve into
 /// the neighbouring world instead of leaking charge between unrelated layers.
 struct SpiralWaters<'a> {
     worlds: &'a [SpiralWorld],
     ship_winding: f32,
     ship_bearing: f32,
+    sea_radius: f32,
 }
 
 impl SpiralWaters<'_> {
@@ -67,49 +74,39 @@ impl Waters for SpiralWaters<'_> {
     fn charge_at(&self, p: Vec2) -> f32 {
         self.worlds[self.world_at(p)].charge.charge_at(p)
     }
-    fn is_land(&self, p: Vec2) -> bool {
-        self.worlds[self.world_at(p)].charge.is_land(p)
+    fn clearance_at(&self, center: Vec2) -> f32 {
+        self.worlds[self.world_at(center)]
+            .rocks
+            .iter()
+            .map(|rock| center.distance(rock.center) - rock.radius)
+            .fold(self.sea_radius - center.length(), f32::min)
+    }
+    fn hull_is_clear(&self, center: Vec2, radius: f32) -> bool {
+        let world = self.world_at(center);
+        let clear_in = |index: usize| {
+            self.worlds[index]
+                .rocks
+                .iter()
+                .all(|rock| center.distance(rock.center) >= radius + rock.radius)
+        };
+        if center.length() > self.sea_radius - radius || !clear_in(world) {
+            return false;
+        }
+        if center.y < 0.0 && center.x.abs() <= radius {
+            (world == 0 || clear_in(world - 1))
+                && (world + 1 == self.worlds.len() || clear_in(world + 1))
+        } else {
+            true
+        }
     }
 }
 
 impl SpiralVoyage {
     pub fn scenario(t: &Tuning) -> Self {
-        let p = islands::polar;
         let island = Circle::new(Vec2::ZERO, t.island_radius);
-        // Every world keeps the seam approach (within ~15° of north, r 15–60) clear.
-        let layouts: Vec<Vec<Circle>> = vec![
-            // World 1: a short leg to the seam. An outer reef pushes the approach inward; an islet
-            // splits it into an inner lagoon channel and a middle channel.
-            islands::land(vec![
-                islands::arc(56.0, 318.0, 348.0, 3.4),
-                islands::islet(p(330.0, 26.0), 5.0),
-                islands::islet(p(275.0, 48.0), 4.5),
-            ]),
-            // World 2: a full circuit. Outer reef in the north-east, islet at 60°, skerries in the
-            // south-east, an inner reef in the south-west forcing the outer passage there.
-            islands::land(vec![
-                islands::arc(62.0, 20.0, 80.0, 3.2),
-                islands::islet(p(60.0, 36.0), 6.0),
-                islands::chain(p(150.0, 46.0), dir(240f32.to_radians()) * 4.4, 4, 3.0),
-                islands::arc(30.0, 200.0, 250.0, 2.8),
-                islands::islet(p(320.0, 48.0), 5.0),
-            ]),
-            // World 3: outer reef north-east, inner reef east, islet south-west, a radial wall
-            // near the seam that forces the inner approach.
-            islands::land(vec![
-                islands::arc(70.0, 12.0, 60.0, 3.2),
-                islands::arc(25.0, 90.0, 150.0, 2.8),
-                islands::islet(p(230.0, 42.0), 6.0),
-                islands::radial(300.0, 44.0, 6, 4.4, 3.0),
-            ]),
-            // World 4: the harbor world. An islet east, a reef band south-east; the harbor's
-            // north-western approach stays open.
-            islands::land(vec![
-                islands::islet(p(60.0, 30.0), 5.0),
-                islands::arc(46.0, 100.0, 140.0, 3.0),
-                vec![Circle::new(p(250.0, 30.0), 3.5)],
-            ]),
-        ];
+        // The level is authored as a polar ASCII map; column 0 of each 30-column block is the
+        // seam bearing (south) and the bottom row is the island itself.
+        let layouts = super::level::parse(super::level::MODE4_LEVEL1, t.island_radius, t.sea_radius);
         let worlds = layouts
             .into_iter()
             .map(|mut rocks| {
@@ -122,8 +119,8 @@ impl SpiralVoyage {
             worlds,
             ship: None,
             ship_world: 0,
-            start: p(300.0, 40.0),
-            start_heading: 30f32.to_radians(),
+            start: islands::polar(300.0, 40.0),
+            start_heading: 60f32.to_radians(),
             last_beam_world: 0,
             end: None,
         }
@@ -142,13 +139,14 @@ impl SpiralVoyage {
 pub fn populate(sv: &mut SpiralVoyage, sea: &mut Sea) {
     let id = sea.spawn("Wayfarer", Form::Ship, sv.start, sv.start_heading);
     sv.ship = Some(id);
-    let start_winding = bearing_of(sv.start);
-    sv.ship_world = world_of(start_winding, sv.worlds.len());
+    // Worlds are measured from the seam (south): the start bearing unwrapped into world 1.
+    let start_winding = winding_in_world(0, bearing_of(sv.start));
+    sv.ship_world = 0;
     if let Some(e) = sea.entity_mut(id) {
         e.winding = start_winding;
     }
     let worlds = sea.tuning.spiral_worlds as f32;
-    sea.beam.winding_limits = Some((0.0, worlds * TAU - 1e-3));
+    sea.beam.winding_limits = Some((SEAM, SEAM + worlds * TAU - 1e-3));
     sea.beam.winding = start_winding;
     sea.beam.range = sv.start.length().clamp(sea.tuning.beam_min_range(), sea.tuning.beam_max_range());
 }
@@ -185,6 +183,7 @@ pub fn step(sv: &mut SpiralVoyage, sea: &mut Sea, footprint: &Footprint, dt: f32
             worlds: &sv.worlds,
             ship_winding: old_winding,
             ship_bearing: bearing_of(old_pos),
+            sea_radius: t.sea_radius,
         };
         let mut voyage_tuning = t.clone();
         voyage_tuning.ship_speed *= t.spiral_ship_speed_factor;
@@ -192,8 +191,8 @@ pub fn step(sv: &mut SpiralVoyage, sea: &mut Sea, footprint: &Footprint, dt: f32
     }
     let ship = &mut sea.entities[idx];
     let new_winding = old_winding + angle_delta(bearing_of(old_pos), bearing_of(ship.pos));
-    let max_winding = n as f32 * TAU;
-    if new_winding < 0.0 || new_winding >= max_winding {
+    let max_winding = SEAM + n as f32 * TAU;
+    if new_winding < SEAM || new_winding >= max_winding {
         // The voyage is finite: the seam before World 1 and after World 4 is a wall. Hold position
         // and turn inward so the hull does not sit against it.
         ship.pos = old_pos;
@@ -202,8 +201,8 @@ pub fn step(sv: &mut SpiralVoyage, sea: &mut Sea, footprint: &Footprint, dt: f32
     } else {
         ship.winding = new_winding;
         // Cross a seam only once the hull is clearly past it (a seam has a width).
-        let upper = (sv.ship_world + 1) as f32 * TAU + SEAM_BAND;
-        let lower = sv.ship_world as f32 * TAU - SEAM_BAND;
+        let upper = SEAM + (sv.ship_world + 1) as f32 * TAU + SEAM_BAND;
+        let lower = SEAM + sv.ship_world as f32 * TAU - SEAM_BAND;
         if new_winding >= upper && sv.ship_world + 1 < n {
             sv.ship_world += 1;
             sea.events.push(Event::ShipCrossed { world: sv.ship_world as u8 });

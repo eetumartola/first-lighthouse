@@ -1,11 +1,15 @@
-//! Scripted keeper that plays each authored scenario through the real beam controls.
-//! Used by the scenario tests as the "demonstrated successful run" and by the developer
-//! autopilot (F9) for demos and visual checks. It knows the authored routes, nothing hidden.
+//! Scripted keeper that plays each scenario through the real beam controls. Used by the scenario
+//! tests as the "demonstrated successful run" and by the developer autopilot (F9). It plans with
+//! the same clearance-aware route finder as World Weaver over the *authored level* land, so it
+//! works on any map and knows nothing hidden about the ships.
 
 use super::beam::Input;
-use super::entity::{Entity, EntityId};
+use super::entity::{Entity, EntityId, Form};
 use super::geom::{angle_delta, bearing_of, dir};
 use super::islands::polar;
+use super::level;
+use super::route;
+use super::spiral_voyage::winding_in_world;
 use super::{Mode, Phase, Rules, World};
 use glam::Vec2;
 use std::collections::HashMap;
@@ -26,59 +30,35 @@ pub struct Keeper {
     plan_index: usize,
 }
 
-fn pts(list: &[(f32, f32)]) -> Vec<Vec2> {
-    list.iter().map(|&(x, y)| Vec2::new(x, y)).collect()
-}
-
-fn polar_pts(list: &[(f32, f32)]) -> Vec<Vec2> {
-    list.iter().map(|&(b, r)| polar(b, r)).collect()
-}
 
 impl Keeper {
     pub fn for_mode(mode: Mode) -> Self {
-        match mode {
-            // Ships cover a route point in a few seconds now, so the keeper paints ahead sooner.
-            Mode::NightWatch => Self::new(night_watch_routes(), 8.0),
-            Mode::MutableSea => Self::new(mutable_sea_routes(), 8.0),
-            Mode::WorldWeaver => Self::weaver(world_weaver_solution()),
-            Mode::SpiralVoyage => Self {
-                routes: HashMap::new(),
-                world_routes: spiral_routes(),
-                // Soft-saturating charge reaches 12 s a third slower than it used to; at 4 u/s
-                // the ship outruns a keeper that waits for that, so it moves on at 8 s.
-                target_charge: 8.0,
-                focus: None,
-                plan: Vec::new(),
-                plan_index: 0,
-            },
-        }
-    }
-
-    pub fn new(routes: HashMap<&'static str, Vec<Vec2>>, target_charge: f32) -> Self {
-        Self {
-            routes,
-            world_routes: Vec::new(),
-            target_charge,
-            focus: None,
-            plan: Vec::new(),
-            plan_index: 0,
-        }
-    }
-
-    pub fn weaver(plan: Vec<(usize, u8)>) -> Self {
+        // Ships cover a route point in a few seconds now, so the keeper paints ahead sooner:
+        // soft-saturating charge reaches 12 s a third slower than linear charging used to.
         Self {
             routes: HashMap::new(),
-            world_routes: Vec::new(),
-            target_charge: 0.0,
+            world_routes: match mode {
+                Mode::SpiralVoyage => spiral_world_routes(),
+                _ => Vec::new(),
+            },
+            target_charge: if mode == Mode::SpiralVoyage { 2.0 } else { 4.0 },
             focus: None,
-            plan,
+            plan: match mode {
+                Mode::WorldWeaver => world_weaver_solution(),
+                _ => Vec::new(),
+            },
             plan_index: 0,
         }
     }
 
+
     /// Route point a ship can actually see and that still needs light.
-    fn next_point(&self, w: &World, ship: &Entity, route: &[Vec2], charge_at: &dyn Fn(Vec2) -> f32) -> Option<Vec2> {
-        let _ = w;
+    fn next_point(
+        target_charge: f32,
+        ship: &Entity,
+        route: &[Vec2],
+        charge_at: &dyn Fn(Vec2) -> f32,
+    ) -> Option<Vec2> {
         let fwd = dir(ship.heading);
         let visible = |p: &Vec2| {
             let to = *p - ship.pos;
@@ -102,20 +82,26 @@ impl Keeper {
             })?;
         route[start..]
             .iter()
-            .find(|p| charge_at(**p) < self.target_charge)
+            .find(|p| charge_at(**p) < target_charge)
             .or_else(|| route[start..].first())
             .copied()
     }
 
-    /// Where the footprint should be right now (Night Watch / Mutable Sea).
+    /// Where the footprint should be right now (Night Watch / Mutable Sea). Routes are planned
+    /// on first sight with the clearance-aware finder over the level's land; a ship with no
+    /// passage is left to its own lights.
     pub fn aim_point(&mut self, w: &World) -> Option<Vec2> {
         let sea = &w.sea;
         let t = &sea.tuning;
         let mut best: Option<(f32, EntityId, Vec2)> = None;
         for ship in sea.entities.iter().filter(|e| e.is_active_ship()) {
-            let Some(route) = self.routes.get(ship.name) else { continue };
+            if !self.routes.contains_key(ship.name) {
+                let planned = plan_route(&sea.rocks, t, ship.pos, t.harbor_center).unwrap_or_default();
+                self.routes.insert(ship.name, planned);
+            }
+            let route = &self.routes[ship.name];
             let charge_at = |p: Vec2| sea.charge.charge_at(p);
-            let Some(point) = self.next_point(w, ship, route, &charge_at) else { continue };
+            let Some(point) = Self::next_point(self.target_charge, ship, route, &charge_at) else { continue };
             let dist = point.distance(ship.pos);
             let to_harbor = ship.pos.distance(t.harbor_center);
             let mut urgency = 1.0 / (1.0 + dist / 10.0) + 0.6 / (1.0 + to_harbor / 20.0);
@@ -135,13 +121,18 @@ impl Keeper {
 
     pub fn input(&mut self, w: &World) -> Input {
         if w.phase != Phase::Night {
-            // Dusk: aim at the first thing worth painting so the night starts on target.
-            if let Phase::Intro { .. } = w.phase {
-                if let Some(aim) = self.aim_point(w) {
-                    return aim_at(w, aim);
+            match (&w.phase, &w.rules) {
+                // Spiral uses the same authored sequence at dusk, positioning the beam at the
+                // first useful point before the ship starts moving.
+                (Phase::Intro { .. }, Rules::SpiralVoyage(_)) => {}
+                (Phase::Intro { .. }, _) => {
+                    if let Some(aim) = self.aim_point(w) {
+                        return aim_at(w, aim);
+                    }
+                    return Input::default();
                 }
+                _ => return Input::default(),
             }
-            return Input::default();
         }
         match &w.rules {
             Rules::WorldWeaver(ww) => {
@@ -165,21 +156,50 @@ impl Keeper {
                 }
             }
             Rules::SpiralVoyage(sv) => {
-                let n = sv.worlds.len();
                 let Some(ship) = sv.ship.and_then(|id| w.sea.entity(id)) else { return Input::default() };
-                // One route through all worlds, ordered by absolute winding, so the point after
-                // a seam is painted in the next world *before* the ship gets there.
-                let flat = self
-                    .world_routes
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(k, r)| r.iter().map(move |p| (k as f32 * TAU + bearing_of(*p), *p, k)));
-                let ahead: Vec<(f32, Vec2, usize)> = flat.filter(|(wind, _, _)| *wind > ship.winding - 0.05).collect();
-                let Some(&(target_winding, point, _)) = ahead
-                    .iter()
-                    .find(|(_, p, k)| *k < n && sv.worlds[*k].charge.charge_at(*p) < self.target_charge)
-                    .or_else(|| ahead.first())
-                else {
+                // Keep the beam within the ship's readable lookahead. Scouting farther is legal,
+                // but an unattended keeper must not abandon the live trail while the ship catches up.
+                let mut target = None;
+                let max_ahead = w.sea.tuning.ship_length * w.sea.tuning.guidance_lookahead_lengths * 0.8;
+                for world in sv.ship_world..self.world_routes.len() {
+                    let route = &self.world_routes[world];
+                    let start = if world == sv.ship_world {
+                        route
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, point)| winding_in_world(world, bearing_of(**point)) > ship.winding + 0.02)
+                            .min_by(|a, b| a.1.distance(ship.pos).total_cmp(&b.1.distance(ship.pos)))
+                            .map(|(index, _)| index)
+                            .unwrap_or(route.len())
+                    } else {
+                        0
+                    };
+                    if start == route.len() {
+                        continue;
+                    }
+                    let mut end = start + 1;
+                    let mut distance = 0.0;
+                    while end < route.len() {
+                        distance += route[end - 1].distance(route[end]);
+                        if distance > max_ahead {
+                            break;
+                        }
+                        end += 1;
+                    }
+                    let window = &route[start..end];
+                    let point = window
+                        .iter()
+                        .rev()
+                        .find(|point| sv.worlds[world].charge.charge_at(**point) < self.target_charge)
+                        .copied();
+                    if point.is_none() && end == route.len() {
+                        continue;
+                    }
+                    let point = point.or_else(|| window.last().copied()).unwrap();
+                    target = Some((winding_in_world(world, bearing_of(point)), point));
+                    break;
+                }
+                let Some((target_winding, point)) = target else {
                     return Input::default();
                 };
                 let d = target_winding - w.sea.beam.winding;
@@ -188,6 +208,14 @@ impl Keeper {
                     rotate: if d.abs() > 0.02 { d.signum() } else { 0.0 },
                     range: if d_range.abs() > 1.0 { d_range.signum() } else { 0.0 },
                     capture: false,
+                }
+            }
+            Rules::NightWatch(_) => {
+                if let Some(decoy) = predator_decoy(w) {
+                    aim_at(w, decoy)
+                } else {
+                    let Some(aim) = self.aim_point(w) else { return Input::default() };
+                    aim_at(w, aim)
                 }
             }
             _ => {
@@ -209,26 +237,64 @@ pub fn aim_at(w: &World, aim: Vec2) -> Input {
         capture: false,
     }
 }
-
-/// Routes end at the northern harbor (0, 14). Alder rounds the west end of the north reef;
-/// Brant passes south of the eastern islet; Cormorant keeps south-east of the skerry chain
-/// (which runs from (-48,-34) to (-30,-52)) then comes up the west side of the island.
-pub fn night_watch_routes() -> HashMap<&'static str, Vec<Vec2>> {
-    HashMap::from([
-        ("Alder", pts(&[(0.0, 85.0), (-12.0, 72.0), (-24.0, 58.0), (-30.0, 44.0), (-26.0, 30.0), (-14.0, 20.0), (-4.0, 16.0), (0.0, 14.0)])),
-        ("Brant", pts(&[(85.0, 8.0), (72.0, 2.0), (58.0, -4.0), (44.0, -6.0), (30.0, -2.0), (18.0, 4.0), (8.0, 10.0), (0.0, 14.0)])),
-        ("Cormorant", pts(&[(-58.0, -64.0), (-44.0, -64.0), (-30.0, -62.0), (-20.0, -50.0), (-14.0, -36.0), (-16.0, -20.0), (-18.0, -4.0), (-14.0, 8.0), (-6.0, 14.0), (0.0, 14.0)])),
-        ("Dunlin", pts(&[(56.0, 58.0), (44.0, 48.0), (32.0, 40.0), (22.0, 32.0), (12.0, 24.0), (4.0, 17.0), (0.0, 14.0)])),
-        ("Eider", pts(&[(66.0, -50.0), (54.0, -44.0), (42.0, -34.0), (32.0, -22.0), (26.0, -8.0), (20.0, 4.0), (10.0, 11.0), (0.0, 14.0)])),
-    ])
+/// Pull a nearby predator away from the vessel it is about to intercept. The keeper still uses
+/// only visible entity positions and the real beam; this is the attentive counterplay taught by
+/// the mode rather than immunity or hidden control.
+fn predator_decoy(w: &World) -> Option<Vec2> {
+    let creature = w.sea.entities.iter().find(|entity| entity.form == Form::Creature && entity.is_active())?;
+    let ship = w
+        .sea
+        .entities
+        .iter()
+        .filter(|entity| entity.is_active_ship())
+        .min_by(|a, b| a.pos.distance(creature.pos).total_cmp(&b.pos.distance(creature.pos)))?;
+    if ship.pos.distance(creature.pos) > 18.0 {
+        return None;
+    }
+    let away = (creature.pos - ship.pos).normalize_or(Vec2::X);
+    let mut decoy = creature.pos + away * 18.0;
+    let limit = w.sea.tuning.sea_radius - w.sea.tuning.beam_length;
+    if decoy.length() > limit {
+        decoy = decoy.normalize_or(Vec2::X) * limit;
+    }
+    Some(decoy)
 }
 
-pub fn mutable_sea_routes() -> HashMap<&'static str, Vec<Vec2>> {
-    HashMap::from([
-        ("Kestrel", pts(&[(-54.0, 38.0), (-42.0, 32.0), (-30.0, 26.0), (-18.0, 20.0), (-8.0, 16.0), (0.0, 14.0)])),
-        ("Merlin", pts(&[(62.0, -20.0), (50.0, -14.0), (38.0, -8.0), (26.0, -2.0), (16.0, 4.0), (8.0, 10.0), (0.0, 14.0)])),
-        ("Osprey", pts(&[(-20.0, -50.0), (-18.0, -34.0), (-20.0, -18.0), (-20.0, -2.0), (-14.0, 10.0), (-6.0, 14.0), (0.0, 14.0)])),
-    ])
+/// A clearance-aware route from `from` to `goal` over the given land. The finder simplifies only
+/// across safe lines of sight; points are then restored at guidance-scale spacing so ships see a
+/// continuous trail rather than isolated corners.
+pub fn plan_route(
+    land: &[super::geom::Circle],
+    t: &super::tuning::Tuning,
+    from: Vec2,
+    goal: Vec2,
+) -> Option<Vec<Vec2>> {
+    plan_route_with_buffer(land, t, from, goal, 3.0)
+}
+
+fn plan_route_with_buffer(
+    land: &[super::geom::Circle],
+    t: &super::tuning::Tuning,
+    from: Vec2,
+    goal: Vec2,
+    steering_buffer: f32,
+) -> Option<Vec<Vec2>> {
+    let sparse = route::find_route(
+        land,
+        t.sea_radius,
+        t.weaver_route_cell,
+        t.ship_radius + steering_buffer,
+        from,
+        goal,
+    )?;
+    let mut route = vec![sparse[0]];
+    for segment in sparse.windows(2) {
+        let steps = (segment[0].distance(segment[1]) / 6.0).ceil().max(1.0) as usize;
+        for step in 1..=steps {
+            route.push(segment[0].lerp(segment[1], step as f32 / steps as f32));
+        }
+    }
+    Some(route)
 }
 
 /// One validated World Weaver assembly: open the east with sector 3 from World 2.
@@ -242,25 +308,148 @@ pub fn world_weaver_alternative() -> Vec<(usize, u8)> {
     vec![(10, 2)]
 }
 
-/// Spiral Voyage route points per world (compass degrees, radius).
-pub fn spiral_routes() -> Vec<Vec<Vec2>> {
-    vec![
-        polar_pts(&[(315.0, 40.0), (330.0, 40.0), (345.0, 40.0), (358.0, 40.0)]),
-        polar_pts(&[
-            (10.0, 40.0), (25.0, 48.0), (45.0, 50.0), (65.0, 50.0), (85.0, 46.0), (110.0, 40.0), (135.0, 34.0),
-            // Clear of the inner reef arc (r 30, 200°-250°) with hull margin.
-            (160.0, 32.0), (185.0, 38.0), (215.0, 46.0), (240.0, 46.0), (265.0, 40.0), (290.0, 38.0),
-            (315.0, 36.0), (340.0, 36.0), (358.0, 36.0),
-        ]),
-        polar_pts(&[
-            (15.0, 40.0), (40.0, 45.0), (70.0, 45.0), (100.0, 42.0), (130.0, 42.0), (160.0, 38.0), (190.0, 32.0),
-            (215.0, 26.0), (240.0, 24.0), (265.0, 30.0), (290.0, 34.0), (310.0, 34.0), (335.0, 36.0), (358.0, 38.0),
-        ]),
-        // World 4: inside the south-east reef, round the west, in to the harbor from the north-west
-        // before the seam wall at 360°.
-        polar_pts(&[
-            (15.0, 36.0), (40.0, 42.0), (65.0, 42.0), (90.0, 40.0), (110.0, 34.0), (135.0, 30.0), (160.0, 30.0),
-            (190.0, 32.0), (215.0, 36.0), (240.0, 40.0), (265.0, 40.0), (290.0, 34.0), (315.0, 28.0), (340.0, 20.0), (350.0, 17.0),
-        ]),
-    ]
+/// Spiral Voyage: one ordered route per world. Intermediate columns force clockwise progress
+/// around each authored block instead of allowing the Cartesian route finder to shortcut backward
+/// across the south seam.
+pub fn spiral_world_routes() -> Vec<Vec<Vec2>> {
+    let t = super::tuning::Tuning::default();
+    // A ship following point guidance can deviate by roughly its minimum turning radius; retain
+    // the route finder's normal margin beyond that dynamic envelope.
+    let steering_buffer = t.ship_speed * t.spiral_ship_speed_factor
+        / t.ship_turn_rate_deg.to_radians()
+        + t.weaver_route_margin;
+    let worlds = level::parse(level::MODE4_LEVEL1, t.island_radius, t.sea_radius);
+    let mut land = vec![super::geom::Circle::new(Vec2::ZERO, t.island_radius)];
+    let mut routes = Vec::with_capacity(worlds.len());
+    let mut entry = polar(300.0, 40.0);
+
+    for (world, rocks) in worlds.iter().enumerate() {
+        land.truncate(1);
+        land.extend(rocks.iter().copied());
+        let mut route = vec![entry];
+        let columns: &[usize] = if world == 0 { &[15, 22] } else { &[7, 15, 22] };
+        for &col in columns {
+            append_column_leg(&mut route, &land, &t, world, col, steering_buffer)
+                .unwrap_or_else(|| panic!("World {} has no clockwise passage through column {col}", world + 1));
+        }
+
+        if world + 1 == worlds.len() {
+            let from = *route.last().unwrap();
+            let leg = plan_route_with_buffer(&land, &t, from, t.harbor_center, steering_buffer)
+                .unwrap_or_else(|| panic!("World {} has no passage to the harbor", world + 1));
+            extend_route(&mut route, leg);
+        } else {
+            let row =
+                append_seam_leg(&mut route, &land, &worlds[world + 1], &t, world, steering_buffer)
+                    .unwrap_or_else(|| panic!("World {} has no hull-clear south-seam exit", world + 1));
+            entry = level::cell_center(level::MODE4_LEVEL1, 0, row, t.island_radius, t.sea_radius);
+        }
+        routes.push(route);
+    }
+    routes
+}
+
+/// Append a safe leg to a free cell in `col`, preferring the middle radii. Returns its row.
+fn append_column_leg(
+    route: &mut Vec<Vec2>,
+    land: &[super::geom::Circle],
+    t: &super::tuning::Tuning,
+    world: usize,
+    col: usize,
+    steering_buffer: f32,
+) -> Option<usize> {
+    let rows = level::rows(level::MODE4_LEVEL1);
+    let middle = rows / 2;
+    let mut row_candidates: Vec<_> = (1..rows - 1).collect();
+    row_candidates.sort_by_key(|row| row.abs_diff(middle));
+    let column_candidates = [
+        col,
+        col - 1,
+        col + 1,
+        col - 2,
+        col + 2,
+        col - 3,
+        col + 3,
+        col - 4,
+        col + 4,
+        col - 5,
+        col + 5,
+        col - 6,
+        col + 6,
+    ];
+    for candidate_col in column_candidates {
+        for &row in &row_candidates {
+            if !level::is_free(level::MODE4_LEVEL1, world, candidate_col, row) {
+                continue;
+            }
+            let goal =
+                level::cell_center(level::MODE4_LEVEL1, candidate_col, row, t.island_radius, t.sea_radius);
+            if hull_clearance(goal, land, t) < steering_buffer {
+                continue;
+            }
+            if let Some(leg) =
+                plan_route_with_buffer(land, t, *route.last().unwrap(), goal, steering_buffer)
+            {
+                extend_route(route, leg);
+                return Some(row);
+            }
+        }
+    }
+    None
+}
+
+/// Pick a seam row by actual hull clearance in both adjacent worlds, not merely empty ASCII cells.
+fn append_seam_leg(
+    route: &mut Vec<Vec2>,
+    land: &[super::geom::Circle],
+    next_rocks: &[super::geom::Circle],
+    t: &super::tuning::Tuning,
+    world: usize,
+    steering_buffer: f32,
+) -> Option<usize> {
+    let mut candidates: Vec<_> = (1..level::rows(level::MODE4_LEVEL1) - 1)
+        .filter(|&row| {
+            level::is_free(level::MODE4_LEVEL1, world, level::COLUMNS - 1, row)
+                && level::is_free(level::MODE4_LEVEL1, world + 1, 0, row)
+        })
+        .collect();
+    let clearance = |row: usize| {
+        let exit = level::cell_center(level::MODE4_LEVEL1, level::COLUMNS - 1, row, t.island_radius, t.sea_radius);
+        let entry = level::cell_center(level::MODE4_LEVEL1, 0, row, t.island_radius, t.sea_radius);
+        let current = land.iter().map(|r| exit.distance(r.center) - r.radius);
+        let next = next_rocks
+            .iter()
+            .map(|r| entry.distance(r.center) - r.radius)
+            .chain(std::iter::once(entry.length() - t.island_radius));
+        current.chain(next).fold(f32::INFINITY, f32::min) - t.ship_radius
+    };
+    candidates.sort_by(|a, b| clearance(*b).total_cmp(&clearance(*a)));
+    for row in candidates {
+        if clearance(row) < steering_buffer {
+            continue;
+        }
+        let goal =
+            level::cell_center(level::MODE4_LEVEL1, level::COLUMNS - 1, row, t.island_radius, t.sea_radius);
+        if let Some(leg) =
+            plan_route_with_buffer(land, t, *route.last().unwrap(), goal, steering_buffer)
+        {
+            extend_route(route, leg);
+            return Some(row);
+        }
+    }
+    None
+}
+fn hull_clearance(
+    point: Vec2,
+    land: &[super::geom::Circle],
+    t: &super::tuning::Tuning,
+) -> f32 {
+    land.iter()
+        .map(|rock| point.distance(rock.center) - rock.radius)
+        .fold(f32::INFINITY, f32::min)
+        - t.ship_radius
+}
+
+fn extend_route(route: &mut Vec<Vec2>, leg: Vec<Vec2>) {
+    route.extend(leg.into_iter().skip(1));
 }

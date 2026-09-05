@@ -119,8 +119,8 @@ pub struct Tuning {
 
     // --- Spiral Voyage ---
     pub spiral_worlds: usize,
-    /// Ship speed multiplier for the four-world voyage, so a full run stays a few minutes long.
-    /// Guidance, inertia and light rules are otherwise identical to Night Watch.
+    /// Ship speed multiplier for the four-world voyage; its broad authored routes support a
+    /// slightly faster crossing while retaining the same guidance and inertia rules.
     pub spiral_ship_speed_factor: f32,
 }
 
@@ -197,7 +197,7 @@ impl Default for Tuning {
             weaver_capture_glow: 9.0,
 
             spiral_worlds: 4,
-            spiral_ship_speed_factor: 1.0,
+            spiral_ship_speed_factor: 1.2,
         }
     }
 }

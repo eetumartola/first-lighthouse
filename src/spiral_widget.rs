@@ -4,7 +4,7 @@
 //! and "where is the ship" are read at a glance.
 
 use crate::app::Session;
-use crate::sim::{Rules, Tuning};
+use crate::sim::{level::SEAM, Rules, Tuning};
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, Viewport};
@@ -61,7 +61,7 @@ fn turn_mesh(turn: usize) -> Mesh {
     let mut normals = Vec::with_capacity(positions.capacity());
     let mut uvs = Vec::with_capacity(positions.capacity());
     for i in 0..=ALONG {
-        let u = turn as f32 * TAU + i as f32 / ALONG as f32 * TAU;
+        let u = SEAM + turn as f32 * TAU + i as f32 / ALONG as f32 * TAU;
         for j in 0..=ACROSS {
             let v = r0 + (r1 - r0) * j as f32 / ACROSS as f32;
             positions.push(on_surface(u, v));
@@ -123,10 +123,11 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
         commands.spawn((Turn(k), Mesh3d(meshes.add(turn_mesh(k))), MeshMaterial3d(dim.clone()), layer.clone()));
     }
     let height = turns as f32 * PITCH;
+    let mid_height = SEAM / TAU * PITCH + height * 0.5;
     commands.spawn((
         Mesh3d(meshes.add(Cylinder::new(SHAFT, height + 0.7))),
         MeshMaterial3d(shaft),
-        Transform::from_xyz(0.0, height * 0.5, 0.0),
+        Transform::from_xyz(0.0, mid_height, 0.0),
         layer.clone(),
     ));
     let bead = meshes.add(Sphere::new(0.075));
@@ -155,7 +156,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
             fov: 30f32.to_radians(),
             ..default()
         }),
-        Transform::from_xyz(0.0, height * 0.5 + 1.1, 9.0).looking_at(Vec3::new(0.0, height * 0.5, 0.0), Vec3::Y),
+        Transform::from_xyz(0.0, mid_height + 1.1, 9.0).looking_at(Vec3::new(0.0, mid_height, 0.0), Vec3::Y),
         Tonemapping::TonyMcMapface,
         // No MSAA: a multisampled second camera resolves over the main image instead of blending.
         Msaa::Off,

@@ -68,6 +68,8 @@ pub enum Target {
     Patch(Vec2),
     /// Computed route waypoint (World Weaver playback).
     Waypoint(usize),
+    /// Emergency rock avoidance temporarily owns ship steering until clear.
+    Avoidance,
 }
 
 /// Steering memory. Intent (`desired`) and hull heading are separate: the light-reading
@@ -126,8 +128,8 @@ pub struct Entity {
     /// edge) shows as a silhouette fading in and out between these sim times.
     pub surfaced_at: f32,
     pub surfaced_until: f32,
-    /// Spiral Voyage: unwrapped compass angle of `pos`, so seam crossings change world.
-    /// `floor(winding / TAU)` is the entity's world index. Unused (0) elsewhere.
+    /// Spiral Voyage: compass angle unwrapped from the south seam, so seam crossings change world.
+    /// `spiral_voyage::world_of(winding, ...)` gives its world index. Unused (0) elsewhere.
     pub winding: f32,
 }
 

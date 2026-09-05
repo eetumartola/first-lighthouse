@@ -14,15 +14,21 @@ use glam::Vec2;
 /// spiral resolves positions near the seam into the neighbouring world.
 pub trait Waters {
     fn charge_at(&self, p: Vec2) -> f32;
-    fn is_land(&self, p: Vec2) -> bool;
+    fn clearance_at(&self, center: Vec2) -> f32;
+    fn hull_is_clear(&self, center: Vec2, radius: f32) -> bool {
+        self.clearance_at(center) >= radius
+    }
 }
 
 impl Waters for ChargeField {
     fn charge_at(&self, p: Vec2) -> f32 {
         ChargeField::charge_at(self, p)
     }
-    fn is_land(&self, p: Vec2) -> bool {
-        ChargeField::is_land(self, p)
+    fn clearance_at(&self, center: Vec2) -> f32 {
+        self.land
+            .iter()
+            .map(|rock| center.distance(rock.center) - rock.radius)
+            .fold(self.sea_radius - center.length(), f32::min)
     }
 }
 
@@ -49,6 +55,7 @@ impl Corridor {
     }
 }
 
+
 /// Corridor for one heading: summed charge along a lookahead corridor that starts *beyond the
 /// hull* (the cell the ship sits in is never "ahead"), slightly favouring the near end so a turn
 /// can still be executed. A corridor counts as illumination only if it is lit at two or more
@@ -60,14 +67,19 @@ pub fn corridor(from: Vec2, heading: f32, waters: &impl Waters, t: &Tuning) -> O
     let step = t.ship_length / 3.0;
     let first = (t.ship_length / step).round() as usize;
     let count = (t.guidance_lookahead() / step).ceil() as usize;
-    let reject_within = t.guidance_obstacle_lengths * t.ship_length + t.ship_radius;
+    let turn_radius = t.ship_speed / t.ship_turn_rate_deg.to_radians();
+    let reject_within =
+        (t.guidance_obstacle_lengths * t.ship_length + t.ship_radius).max(turn_radius + t.ship_radius);
     let mut score = 0.0;
     let mut lit = 0;
     let mut reach = 0.0;
     for k in first..=count {
         let dist = k as f32 * step;
         let p = from + d * dist;
-        if t.guidance_obstacle_rejection && dist <= reject_within && waters.is_land(p) {
+        if t.guidance_obstacle_rejection
+            && dist <= reject_within
+            && !waters.hull_is_clear(p, t.ship_radius)
+        {
             return None;
         }
         let c = waters.charge_at(p);
@@ -88,7 +100,8 @@ pub fn steer_ship(e: &mut Entity, waters: &impl Waters, t: &Tuning, dt: f32) {
         e.brain.desired = e.heading;
     }
     e.brain.since_eval += dt;
-    if e.brain.since_eval >= 1.0 / t.guidance_hz {
+    let avoiding = matches!(e.brain.target, Some(Target::Avoidance));
+    if !avoiding && e.brain.since_eval >= 1.0 / t.guidance_hz {
         e.brain.since_eval = 0.0;
         let half_arc = t.guidance_arc_deg.to_radians() * 0.5;
         let step = 2.0 * half_arc / (CANDIDATES - 1) as f32;
@@ -101,7 +114,11 @@ pub fn steer_ship(e: &mut Entity, waters: &impl Waters, t: &Tuning, dt: f32) {
             // patch passing abeam does not pull the ship round into an orbit.
             let turn = (offset / half_arc).abs();
             c.score *= 1.0 - t.guidance_turn_penalty * turn * turn;
-            if best.is_none_or(|(b, _)| c.score > b.score) {
+            if best.is_none_or(|(b, prior)| {
+                c.score > b.score
+                    || (c.score == b.score
+                        && angle_delta(e.heading, heading).abs() < angle_delta(e.heading, prior).abs())
+            }) {
                 best = Some((c, heading));
             }
         }
@@ -112,6 +129,7 @@ pub fn steer_ship(e: &mut Entity, waters: &impl Waters, t: &Tuning, dt: f32) {
         } else {
             Corridor::default()
         };
+        let current_blocked = corridor(e.pos, e.heading, waters, t).is_none();
         let incumbent_live = incumbent.score >= t.guidance_min_score;
         e.brain.desired_score = if incumbent_live { incumbent.score } else { 0.0 };
         let mut challenger_persists = false;
@@ -132,6 +150,11 @@ pub fn steer_ship(e: &mut Entity, waters: &impl Waters, t: &Tuning, dt: f32) {
                     e.brain.desired_score = c.score;
                     challenger_persists = false;
                 }
+            } else if current_blocked && !incumbent_live {
+                // No readable light is safe, but the current course hits land: turn toward the
+                // closest clear corridor instead of preserving a fatal heading.
+                e.brain.desired = heading;
+                e.brain.desired_score = 0.0;
             }
         }
         if !challenger_persists {
@@ -146,7 +169,36 @@ pub fn steer_ship(e: &mut Entity, waters: &impl Waters, t: &Tuning, dt: f32) {
         e.brain.desired = bearing_of(-e.pos);
     }
     e.heading = turn_toward(e.heading, e.brain.desired, t.ship_turn_rate_deg.to_radians() * dt);
-    e.pos += dir(e.heading) * t.ship_speed * dt;
+    let next = e.pos + dir(e.heading) * t.ship_speed * dt;
+    if waters.hull_is_clear(next, t.ship_radius) {
+        e.pos = next;
+        if avoiding {
+            let turn_radius = t.ship_speed / t.ship_turn_rate_deg.to_radians();
+            if waters.clearance_at(e.pos) >= t.ship_radius + turn_radius {
+                e.brain.target = None;
+                e.brain.since_eval = f32::MAX;
+            }
+        }
+    } else {
+        // Avoidance owns intent until the hull has moved a full turn radius from land; otherwise
+        // the light evaluation can reset the escape heading every few frames and deadlock.
+        let step = t.ship_speed * dt;
+        let escape_blocked = !waters.hull_is_clear(e.pos + dir(e.brain.desired) * step, t.ship_radius);
+        if !avoiding || escape_blocked {
+            let turn_radius = t.ship_speed / t.ship_turn_rate_deg.to_radians();
+            let probe = turn_radius + t.ship_length;
+            e.brain.target = Some(Target::Avoidance);
+            e.brain.desired = (0..24)
+                .map(|i| i as f32 * std::f32::consts::TAU / 24.0)
+                .filter(|heading| waters.hull_is_clear(e.pos + dir(*heading) * step, t.ship_radius))
+                .max_by(|a, b| {
+                    waters
+                        .clearance_at(e.pos + dir(*a) * probe)
+                        .total_cmp(&waters.clearance_at(e.pos + dir(*b) * probe))
+                })
+                .unwrap_or(e.heading);
+        }
+    }
 }
 
 /// Follow a computed waypoint list (World Weaver playback). Returns true at the final waypoint.
@@ -371,17 +423,19 @@ mod tests {
     }
 
     #[test]
-    fn corridor_into_land_is_rejected_not_detoured() {
+    fn blocked_trail_triggers_hull_safe_avoidance() {
         let t = Tuning::default();
         let rock = Circle::new(Vec2::new(0.0, 50.0), 4.0);
         let mut f = ChargeField::new(&t, &[rock]);
-        // Bright trail straight through the rock: the heading into it is rejected; the ship
-        // holds course rather than inventing a detour when nothing else is lit.
+        // A bright trail through land is not a valid command. The ship turns around the obstacle
+        // and its hull never enters the rock.
         paint(&mut f, Vec2::new(0.0, 58.0), Vec2::new(0.0, 40.0), 20.0);
         let mut ship = Entity::new(1, "S", Form::Ship, Vec2::new(0.0, 56.0), PI, &t);
         assert!(corridor(ship.pos, PI, &f, &t).is_none());
-        run(&mut ship, &f, &t, 1.0, |_| {});
-        assert!(angle_delta(ship.heading, PI).abs() < 0.5);
+        run(&mut ship, &f, &t, 5.0, |ship| {
+            assert!(ship.pos.distance(rock.center) >= ship.radius + rock.radius);
+        });
+        assert!(angle_delta(ship.heading, PI).abs() > 0.2, "ship kept steering into the rock");
     }
 
     #[test]
