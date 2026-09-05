@@ -127,35 +127,36 @@ impl ChargeField {
         best.map(|(_, p, c)| (p, c))
     }
 
-    /// Advance decay everywhere and charge under the footprint.
+    /// Charge under the footprint, then advance decay everywhere.
     pub fn step(&mut self, footprint: Option<&Footprint>, tuning: &Tuning, dt: f32) {
-        for c in &mut self.charge {
-            *c = (*c - dt).max(0.0);
-        }
-        let Some(fp) = footprint else { return };
-        let (center, radius) = fp.bounds();
-        let lo = ((center - Vec2::splat(radius) - self.origin) / self.cell).floor();
-        let hi = ((center + Vec2::splat(radius) - self.origin) / self.cell).ceil();
-        let i0 = lo.x.max(0.0) as usize;
-        let j0 = lo.y.max(0.0) as usize;
-        let i1 = (hi.x.max(0.0) as usize).min(self.size);
-        let j1 = (hi.y.max(0.0) as usize).min(self.size);
-        // Diminishing returns: a cell gains at the full rate when dark and ever more slowly as it
-        // fills, so a lingering beam brightens a spot gently instead of saturating it. Charging
-        // also restores this step's decay, so a lit cell never loses glow (a dark cell, which had
-        // nothing to lose, gains one frame's worth extra: negligible).
-        for j in j0..j1 {
-            for i in i0..i1 {
-                let idx = j * self.size + i;
-                if !self.sea[idx] {
-                    continue;
-                }
-                if fp.contains(self.cell_center(idx)) {
-                    let c = self.charge[idx];
-                    let headroom = (1.0 - c / tuning.charge_cap).max(0.0);
-                    self.charge[idx] = (c + (tuning.charge_rate * headroom + 1.0) * dt).min(tuning.charge_cap);
+        if let Some(fp) = footprint {
+            let (center, radius) = fp.bounds();
+            let lo = ((center - Vec2::splat(radius) - self.origin) / self.cell).floor();
+            let hi = ((center + Vec2::splat(radius) - self.origin) / self.cell).ceil();
+            let i0 = lo.x.max(0.0) as usize;
+            let j0 = lo.y.max(0.0) as usize;
+            let i1 = (hi.x.max(0.0) as usize).min(self.size);
+            let j1 = (hi.y.max(0.0) as usize).min(self.size);
+            // Diminishing returns: a cell gains at the full rate when dark and ever more slowly as
+            // it fills, so a lingering beam brightens a spot gently instead of saturating it. The
+            // extra `dt` is taken back by the decay pass below, so a lit cell never loses glow and
+            // a fresh one gains exactly `charge_rate * dt`.
+            for j in j0..j1 {
+                for i in i0..i1 {
+                    let idx = j * self.size + i;
+                    if !self.sea[idx] {
+                        continue;
+                    }
+                    if fp.contains(self.cell_center(idx)) {
+                        let c = self.charge[idx];
+                        let headroom = (1.0 - c / tuning.charge_cap).max(0.0);
+                        self.charge[idx] = (c + (tuning.charge_rate * headroom + 1.0) * dt).min(tuning.charge_cap + dt);
+                    }
                 }
             }
+        }
+        for c in &mut self.charge {
+            *c = (*c - dt).max(0.0);
         }
     }
 
@@ -199,11 +200,19 @@ mod tests {
             }
             f.charge_at(p) - before
         };
-        // Dark water charges at nearly the full rate; each further second yields less.
+        // A fresh cell gains exactly one frame of charging; then each second yields less than the last.
+        f.step(Some(&fp), &t, dt);
+        assert!((f.charge_at(p) - t.charge_rate * dt).abs() < 1e-5, "{}", f.charge_at(p));
         let first = second(&mut f);
         let next = second(&mut f);
         assert!(first > 0.8 * t.charge_rate && first < t.charge_rate, "{first}");
         assert!(next < first, "{next} >= {first}");
+        // A cell already at the cap holds there under the beam.
+        let idx = f.index_of(p).unwrap();
+        f.charge[idx] = t.charge_cap;
+        f.step(Some(&fp), &t, dt);
+        assert_eq!(f.charge_at(p), t.charge_cap);
+        f.charge[idx] = 0.0;
         // A lingering beam creeps toward the cap and never exceeds it at any step.
         for _ in 0..(60.0 * 30.0) as usize {
             f.step(Some(&fp), &t, dt);
