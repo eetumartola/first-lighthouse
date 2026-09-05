@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>First Lighthouse</title>
+    <link rel="icon" href="data:," />
+    <link data-trunk rel="rust" href="../Cargo.toml" data-bindgen-target="web" data-weak-refs data-initializer="init.js" />
+    <link data-trunk rel="copy-dir" href="../assets" />
+    <style>
+      html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+      canvas { display: block; width: 100vw; height: 100vh; outline: none; }
+      #status {
+        position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+        color: #cfc8b8; font: 16px/1.5 monospace; text-align: center; pointer-events: none;
+        background: #000;
+      }
+      #status.hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <div id="status">First Lighthouse<br /><small>loading…</small></div>
+    <canvas id="game"></canvas>
+  </body>
+</html>

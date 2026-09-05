@@ -155,7 +155,7 @@ fn setup_scene(
             step_count: 40,
             ..default()
         },
-        Msaa::Sample2,
+        Msaa::Sample4,
     ));
 
     // Fog volume covering the sea. Bevy attenuates in-scattered light over the volume's bounding

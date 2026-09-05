@@ -1,0 +1,10 @@
+# Browser build: `trunk build --release` → dist/ ; `trunk serve --release` for local testing.
+# Trunk downloads a wasm-bindgen matching Cargo.lock, so no global install is needed.
+[build]
+target = "web/index.html"
+dist = "dist"
+features = ["web"]
+public_url = "./"
+
+[serve]
+port = 8080

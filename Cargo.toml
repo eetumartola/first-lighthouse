@@ -10,6 +10,8 @@ glam = "0.32"
 [features]
 # Faster incremental iteration: `cargo run --features dev`
 dev = ["bevy/dynamic_linking"]
+# Browser build (Trunk): WebGPU backend so volumetric fog and the sea material work in the browser.
+web = ["bevy/web", "bevy/webgpu"]
 
 [profile.dev]
 opt-level = 1
@@ -20,3 +22,13 @@ opt-level = 3
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# Browser iteration: optimized deps, no LTO, parallel codegen. Rebuilds in about a minute;
+# the .wasm is larger. `trunk build --cargo-profile web-dev`
+[profile.web-dev]
+inherits = "release"
+lto = "off"
+codegen-units = 16
+incremental = true
+opt-level = 2
+debug = false

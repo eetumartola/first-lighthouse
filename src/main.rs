@@ -14,14 +14,23 @@ use bevy::prelude::*;
 use bevy::window::{PresentMode, WindowResolution};
 
 fn main() {
+    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
+    let mut window = Window {
+        title: "First Lighthouse".into(),
+        resolution: WindowResolution::new(1600, 900),
+        present_mode: PresentMode::AutoVsync,
+        ..default()
+    };
+    #[cfg(target_arch = "wasm32")]
+    {
+        // Render into the page's canvas and follow the viewport; keys like Space must not scroll.
+        window.canvas = Some("#game".into());
+        window.fit_canvas_to_parent = true;
+        window.prevent_default_event_handling = true;
+    }
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "First Lighthouse".into(),
-                resolution: WindowResolution::new(1600, 900),
-                present_mode: PresentMode::AutoVsync,
-                ..default()
-            }),
+            primary_window: Some(window),
             ..default()
         }))
         .add_plugins((
