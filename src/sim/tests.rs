@@ -522,14 +522,20 @@ fn arriving_ship_shows_at_the_edge_then_fades() {
         }
         assert!(w.phase != Phase::Finished, "Cormorant never arrived");
     };
-    let mut peak = 0.0f32;
-    for _ in 0..(60.0 * w.tuning().ship_arrival_reveal_seconds) as usize {
+    // Fade in, full in the middle, fade out: sample the strength through the window.
+    let strength = |w: &World| match w.entity_visibility(w.sea.entity(ship).unwrap()) {
+        Visibility::Silhouette(k) => k,
+        _ => 0.0,
+    };
+    let frames = (60.0 * w.tuning().ship_arrival_reveal_seconds) as usize;
+    let mut samples = Vec::with_capacity(frames);
+    for _ in 0..frames {
         w.step(Input::default(), DT);
-        if let Visibility::Silhouette(k) = w.entity_visibility(w.sea.entity(ship).unwrap()) {
-            peak = peak.max(k);
-        }
+        samples.push(strength(&w));
     }
-    assert!(peak > 0.5, "arrival never revealed the ship: peak {peak}");
+    let (early, mid, late) = (samples[frames / 10], samples[frames / 2], samples[frames - frames / 10]);
+    assert!(mid > 0.5, "arrival never revealed the ship: mid {mid}");
+    assert!(early < mid && late < mid, "no fade: early {early} mid {mid} late {late}");
     w.step(Input::default(), DT);
     assert_eq!(w.entity_visibility(w.sea.entity(ship).unwrap()), Visibility::Hidden, "reveal did not end");
 }

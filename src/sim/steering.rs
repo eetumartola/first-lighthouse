@@ -355,6 +355,22 @@ mod tests {
     }
 
     #[test]
+    fn predator_eats_within_its_mouth_radius_only() {
+        let t = Tuning::default();
+        let mut f = ChargeField::new(&t, &[]);
+        // Nothing detectable: the predator only cruises, so what it eats is what lies at its mouth.
+        let mut p = Entity::new(1, "P", Form::Creature, Vec2::ZERO, 0.0, &t);
+        let near = Vec2::new(3.0, 0.0);
+        let far = Vec2::new(8.0, 0.0);
+        let (ni, fi) = (f.index_of(near).unwrap(), f.index_of(far).unwrap());
+        f.charge[ni] = 1.0;
+        f.charge[fi] = 1.0;
+        steer_predator(&mut p, &mut f, &[], &t, 1.0 / 60.0);
+        assert!(f.charge[ni] < 1.0, "charge inside the mouth radius was not eaten");
+        assert_eq!(f.charge[fi], 1.0, "charge beyond the mouth radius was eaten");
+    }
+
+    #[test]
     fn corridor_into_land_is_rejected_not_detoured() {
         let t = Tuning::default();
         let rock = Circle::new(Vec2::new(0.0, 50.0), 4.0);
