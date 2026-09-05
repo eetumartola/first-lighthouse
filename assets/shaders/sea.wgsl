@@ -107,10 +107,19 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     if sea.fp_kind != 0u {
         let b = atan2(sim.x, sim.y);
         let d = abs(angle_delta(sea.fp_bearing, b));
-        let edge = select(0.35, 0.2, sea.fp_kind == 2u);
-        let in_ang = 1.0 - smoothstep(sea.fp_half_angle * (1.0 - edge), sea.fp_half_angle, d);
-        let in_r = smoothstep(sea.fp_r_min, sea.fp_r_min + 1.5, r) * (1.0 - smoothstep(sea.fp_r_max - 1.5, sea.fp_r_max, r));
-        fp = in_ang * in_r;
+        if sea.fp_kind == 1u {
+            // Spot: an oval in polar space, matching the simulation's footprint exactly at its
+            // rim (elliptical distance 1) with a wave-broken soft edge inside it.
+            let half_len = (sea.fp_r_max - sea.fp_r_min) * 0.5;
+            let u = d / sea.fp_half_angle;
+            let v = (r - (sea.fp_r_min + sea.fp_r_max) * 0.5) / half_len;
+            let e = sqrt(u * u + v * v);
+            fp = 1.0 - smoothstep(0.7, 1.0, e);
+        } else {
+            let in_ang = 1.0 - smoothstep(sea.fp_half_angle * 0.8, sea.fp_half_angle, d);
+            let in_r = smoothstep(sea.fp_r_min, sea.fp_r_min + 1.5, r) * (1.0 - smoothstep(sea.fp_r_max - 1.5, sea.fp_r_max, r));
+            fp = in_ang * in_r;
+        }
         // The beam itself, from the tower to the sea's edge: a faint lane the spotlight sits in.
         if sea.fp_kind == 1u {
             let lane_ang = 1.0 - smoothstep(sea.fp_half_angle * 0.5, sea.fp_half_angle, d);

@@ -37,6 +37,8 @@ pub struct Beam {
     pub kind: FootprintKind,
 }
 
+/// Where the beam lights the water. The spot is an oval in polar space: its angular half-width
+/// and radial half-length are the semi-axes, so it reads as a rounded patch rather than a wedge.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Footprint {
     Spot {
@@ -64,7 +66,11 @@ impl Footprint {
                 half_angle,
                 r_min,
                 r_max,
-            } => r >= r_min && r <= r_max && angle_delta(bearing, b).abs() <= half_angle,
+            } => {
+                let u = angle_delta(bearing, b) / half_angle;
+                let v = (r - (r_min + r_max) * 0.5) / ((r_max - r_min) * 0.5);
+                u * u + v * v <= 1.0
+            }
             Footprint::Sector {
                 angle_start,
                 angle_end,

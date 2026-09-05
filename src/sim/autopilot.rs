@@ -164,10 +164,12 @@ impl Keeper {
                 for world in sv.ship_world..self.world_routes.len() {
                     let route = &self.world_routes[world];
                     let start = if world == sv.ship_world {
+                        // Nearest route point that is not clearly astern: a ship that has lost
+                        // the trail at a bend is drawn back onto it rather than led further away.
                         route
                             .iter()
                             .enumerate()
-                            .filter(|(_, point)| winding_in_world(world, bearing_of(**point)) > ship.winding + 0.02)
+                            .filter(|(_, point)| winding_in_world(world, bearing_of(**point)) > ship.winding - 0.15)
                             .min_by(|a, b| a.1.distance(ship.pos).total_cmp(&b.1.distance(ship.pos)))
                             .map(|(index, _)| index)
                             .unwrap_or(route.len())
@@ -186,10 +188,11 @@ impl Keeper {
                         }
                         end += 1;
                     }
+                    // Nearest dim point first: the trail grows continuously from the ship, so a
+                    // rounded footprint never leaves an unlit gap the corridor search would miss.
                     let window = &route[start..end];
                     let point = window
                         .iter()
-                        .rev()
                         .find(|point| sv.worlds[world].charge.charge_at(**point) < self.target_charge)
                         .copied();
                     if point.is_none() && end == route.len() {
@@ -344,7 +347,7 @@ pub fn spiral_world_routes() -> Vec<Vec<Vec2>> {
                     .unwrap_or_else(|| panic!("World {} has no hull-clear south-seam exit", world + 1));
             entry = level::cell_center(level::MODE4_LEVEL1, 0, row, t.island_radius, t.sea_radius);
         }
-        routes.push(route);
+        routes.push(straighten(route, &land, &t, t.ship_radius + steering_buffer));
     }
     routes
 }
@@ -452,4 +455,33 @@ fn hull_clearance(
 
 fn extend_route(route: &mut Vec<Vec2>, leg: Vec<Vec2>) {
     route.extend(leg.into_iter().skip(1));
+}
+
+/// Greedy line-of-sight shortcutting over a finished route, then re-spacing at trail scale. The
+/// forced column waypoints can send a leg into a pocket and straight back out; a ship reading
+/// light cannot follow such a hairpin, so it is cut where the hull can pass directly. Shortcuts
+/// only ever advance clockwise by less than a quarter turn, so the circuit itself survives.
+fn straighten(route: Vec<Vec2>, land: &[super::geom::Circle], t: &super::tuning::Tuning, clearance: f32) -> Vec<Vec2> {
+    let allowed = |a: Vec2, b: Vec2| {
+        let d = angle_delta(bearing_of(a), bearing_of(b));
+        (-0.05..=std::f32::consts::FRAC_PI_2).contains(&d) && route::segment_clear(a, b, land, t.sea_radius, clearance)
+    };
+    let mut sparse = vec![route[0]];
+    let mut i = 0;
+    while i + 1 < route.len() {
+        let mut j = route.len() - 1;
+        while j > i + 1 && !allowed(route[i], route[j]) {
+            j -= 1;
+        }
+        sparse.push(route[j]);
+        i = j;
+    }
+    let mut out = vec![sparse[0]];
+    for segment in sparse.windows(2) {
+        let steps = (segment[0].distance(segment[1]) / 6.0).ceil().max(1.0) as usize;
+        for step in 1..=steps {
+            out.push(segment[0].lerp(segment[1], step as f32 / steps as f32));
+        }
+    }
+    out
 }

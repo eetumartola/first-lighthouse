@@ -145,8 +145,9 @@ impl Default for Tuning {
             beam_accel_seconds: 0.25,
             beam_stop_seconds: 0.12,
             auto_turn_seconds: 12.0,
-            beam_width_deg: 15.0,
-            beam_length: sea_radius / 8.0,
+            // Oval spot: axes widened ~13% over the old wedge so the lit area is unchanged.
+            beam_width_deg: 17.0,
+            beam_length: sea_radius / 7.0,
             beam_range_speed: 28.0,
 
             charge_rate: 5.0,

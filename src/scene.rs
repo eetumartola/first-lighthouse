@@ -41,6 +41,11 @@ struct Reflector;
 #[derive(Component)]
 struct HarborLamp;
 
+/// Every piece of the harbor; hidden in Spiral Voyage while the ship's view of the harbor's
+/// position is not World 4.
+#[derive(Component)]
+struct HarborPart;
+
 #[derive(Resource, Default)]
 struct SceneState {
     generation: u32,
@@ -76,6 +81,7 @@ impl Plugin for ScenePlugin {
                     update_exposure,
                     update_weaver_markers,
                     update_world_rocks,
+                    update_harbor,
                 ),
             );
     }
@@ -266,6 +272,7 @@ fn setup_scene(
         let a = 60f32.to_radians() + i as f32 * (240f32.to_radians() / 8.0);
         let p = hc + glam::Vec2::new(a.sin(), a.cos()) * t.harbor_radius;
         commands.spawn((
+            HarborPart,
             Mesh3d(post.clone()),
             MeshMaterial3d(dark_stone.clone()),
             Transform::from_translation(to_world_h(p, 0.9)),
@@ -274,11 +281,13 @@ fn setup_scene(
     for side in [-1.0f32, 1.0] {
         let p = hc + glam::Vec2::new(side * t.harbor_radius * 0.75, t.harbor_radius * 0.75);
         commands.spawn((
+            HarborPart,
             Mesh3d(post.clone()),
             MeshMaterial3d(dark_stone.clone()),
             Transform::from_translation(to_world_h(p, 1.2)).with_scale(Vec3::new(1.0, 1.5, 1.0)),
         ));
         commands.spawn((
+            HarborPart,
             HarborLamp,
             Mesh3d(lamp.clone()),
             MeshMaterial3d(warm_glow.clone()),
@@ -286,6 +295,7 @@ fn setup_scene(
         ));
     }
     commands.spawn((
+        HarborPart,
         Mesh3d(meshes.add(Torus {
             minor_radius: 0.12,
             major_radius: t.harbor_radius,
@@ -605,7 +615,7 @@ fn update_lighthouse(
         tf.scale = Vec3::splat((0.01 + level * 1.0) * flicker);
     }
     for mut l in &mut flame_light {
-        l.intensity = 900_000.0 * level * flicker;
+        l.intensity = 250_000.0 * level * flicker;
     }
     // Reflector sits behind the flame, opposite the beam direction; compass bearing → yaw.
     for mut tf in &mut reflector {
@@ -680,5 +690,25 @@ fn update_world_rocks(session: Res<Session>, mut rocks: Query<(&WorldRocks, &mut
     let view = sv.perspective(&world.sea);
     for (rock, mut vis) in &mut rocks {
         *vis = if view.world_at(rock.center) == rock.world { Visibility::Visible } else { Visibility::Hidden };
+    }
+}
+
+/// The harbor exists only in the last world: in Spiral Voyage it shows when the ship's view of
+/// the spiral resolves the harbor's position into World 4. Other modes always show it.
+fn update_harbor(session: Res<Session>, mut parts: Query<&mut Visibility, With<HarborPart>>) {
+    let show = match session.world() {
+        Some(world) => match &world.rules {
+            Rules::SpiralVoyage(sv) => {
+                sv.perspective(&world.sea).world_at(world.tuning().harbor_center) == sv.worlds.len() - 1
+            }
+            _ => true,
+        },
+        None => true,
+    };
+    let want = if show { Visibility::Inherited } else { Visibility::Hidden };
+    for mut vis in &mut parts {
+        if *vis != want {
+            *vis = want;
+        }
     }
 }
