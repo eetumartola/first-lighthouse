@@ -23,7 +23,8 @@ pub struct SeaParams {
     pub fp_r_max: f32,
     pub dawn: f32,
     pub strong_threshold: f32,
-    pub _pad0: f32,
+    /// 1 when the beam's whole length dimly lights the water (Spiral Voyage); 0 otherwise.
+    pub beam_lane: f32,
     pub _pad1: f32,
 }
 
@@ -138,7 +139,9 @@ fn update_sea(
         return;
     };
 
-    // Footprint parameters, only while the beam lights the water.
+    // Footprint parameters, only while the beam lights the water. The spiral shows the beam's
+    // whole length dimly; the bright footprint alone charges plankton.
+    params.beam_lane = if matches!(world.rules, crate::sim::Rules::SpiralVoyage(_)) { 1.0 } else { 0.0 };
     if world.beam_active() {
         match world.footprint() {
             Footprint::Spot {

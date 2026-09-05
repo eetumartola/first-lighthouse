@@ -31,7 +31,8 @@ struct SeaParams {
     // 0 night .. 1 full daylight
     dawn: f32,
     strong_threshold: f32,
-    _pad0: f32,
+    // 1 = the beam's whole length dimly lights the water (spotlight modes only)
+    beam_lane: f32,
     _pad1: f32,
 }
 
@@ -102,6 +103,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // Beam footprint: the stylized patch that actually charges the water. It brightens the water
     // itself (so the spotlight's ripples show) and adds a warm glow with a wave-broken edge.
     var fp = 0.0;
+    var lane = 0.0;
     if sea.fp_kind != 0u {
         let b = atan2(sim.x, sim.y);
         let d = abs(angle_delta(sea.fp_bearing, b));
@@ -109,13 +111,19 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let in_ang = 1.0 - smoothstep(sea.fp_half_angle * (1.0 - edge), sea.fp_half_angle, d);
         let in_r = smoothstep(sea.fp_r_min, sea.fp_r_min + 1.5, r) * (1.0 - smoothstep(sea.fp_r_max - 1.5, sea.fp_r_max, r));
         fp = in_ang * in_r;
+        // The beam itself, from the tower to the sea's edge: a faint lane the spotlight sits in.
+        if sea.fp_kind == 1u {
+            let lane_ang = 1.0 - smoothstep(sea.fp_half_angle * 0.5, sea.fp_half_angle, d);
+            let lane_r = smoothstep(8.0, 14.0, r) * (1.0 - smoothstep(sea.sea_radius - 4.0, sea.sea_radius, r));
+            lane = sea.beam_lane * lane_ang * lane_r * (1.0 - fp);
+        }
     }
     // Light on water: waves catch it unevenly.
     let wave_catch = 0.75 + 0.25 * (w1 * 0.5 + w3 * 0.5);
     let fp_strength = select(1.1, 0.06, sea.fp_kind == 2u) * wave_catch;
-    emissive = emissive + vec3<f32>(1.0, 0.86, 0.6) * fp * fp_strength;
+    emissive = emissive + vec3<f32>(1.0, 0.86, 0.6) * (fp * fp_strength + lane * 0.05 * wave_catch);
     let lit_water = vec4<f32>(0.32, 0.42, 0.5, 1.0);
-    pbr_input.material.base_color = mix(pbr_input.material.base_color, lit_water, fp * select(0.85, 0.2, sea.fp_kind == 2u));
+    pbr_input.material.base_color = mix(pbr_input.material.base_color, lit_water, fp * select(0.85, 0.2, sea.fp_kind == 2u) + lane * 0.12);
 
     // Dawn: the sea lightens and the plankton fades against daylight.
     emissive = emissive * (1.0 - 0.85 * sea.dawn);

@@ -202,8 +202,8 @@ fn spawn_form(commands: &mut Commands, assets: &FormAssets, form: Form, transfor
 }
 
 /// Visual-only enlargement so hull silhouettes read from the fixed camera; collision radii are
-/// unchanged.
-const VISUAL_SCALE: f32 = 1.4;
+/// unchanged. Doubled from the first pass on playtest feedback.
+const VISUAL_SCALE: f32 = 2.8;
 
 fn heading_transform(pos: glam::Vec2, heading: f32, height: f32) -> Transform {
     let d = to_world(sim::geom::dir(heading));
