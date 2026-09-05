@@ -64,19 +64,40 @@ pub enum Status {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Target {
-    /// A painted route sample at a fixed position.
-    Sample(Vec2),
-    /// Another entity's lantern.
-    Lantern(EntityId),
-    /// World Weaver authored route waypoint.
+    /// A charged patch the predator is heading for.
+    Patch(Vec2),
+    /// Computed route waypoint (World Weaver playback).
     Waypoint(usize),
 }
 
-#[derive(Clone, Debug, Default)]
+/// Steering memory. Intent (`desired`) and hull heading are separate: the light-reading
+/// decision can change instantly while the hull turns gradually.
+#[derive(Clone, Debug)]
 pub struct Brain {
     pub target: Option<Target>,
-    /// Passed samples and the time until which they must not be re-selected.
-    pub visited: Vec<(Vec2, f32)>,
+    /// Accepted desired heading (compass radians).
+    pub desired: f32,
+    /// Corridor score of the incumbent direction at the last evaluation.
+    pub desired_score: f32,
+    /// Seconds since intent was last reconsidered.
+    pub since_eval: f32,
+    /// A better direction has to keep winning for the tuned dwell before it displaces a live
+    /// incumbent; this is the heading it has been winning with and for how long.
+    pub challenger: f32,
+    pub challenger_for: f32,
+}
+
+impl Default for Brain {
+    fn default() -> Self {
+        Self {
+            target: None,
+            desired: f32::NAN,
+            desired_score: 0.0,
+            since_eval: f32::MAX,
+            challenger: f32::NAN,
+            challenger_for: 0.0,
+        }
+    }
 }
 
 /// Mutable Sea transformation progress. Light pauses the timer; it never resets it.
@@ -103,6 +124,9 @@ pub struct Entity {
     pub mutable: Option<Mutable>,
     /// Creatures surface briefly when they call; visible as a silhouette until this sim time.
     pub surfaced_until: f32,
+    /// Spiral Voyage: unwrapped compass angle of `pos`, so seam crossings change world.
+    /// `floor(winding / TAU)` is the entity's world index. Unused (0) elsewhere.
+    pub winding: f32,
 }
 
 impl Entity {
@@ -119,6 +143,7 @@ impl Entity {
             brain: Brain::default(),
             mutable: None,
             surfaced_until: 0.0,
+            winding: 0.0,
         }
     }
 

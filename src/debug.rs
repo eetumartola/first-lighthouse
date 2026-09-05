@@ -143,12 +143,13 @@ fn draw_overlay(settings: Res<Settings>, session: Res<Session>, mut gizmos: Gizm
     let sea = &world.sea;
     let t = world.tuning();
 
-    // Charge grid: cells with any charge.
-    for (i, c) in sea.charge.charge.iter().enumerate() {
+    // Charge grid of the inspected world: cells with any charge.
+    let field = world.view_charge();
+    for (i, c) in field.charge.iter().enumerate() {
         if *c <= 0.0 {
             continue;
         }
-        let p = sea.charge.cell_center(i);
+        let p = field.cell_center(i);
         let k = (c / t.charge_cap).clamp(0.0, 1.0);
         let color = if *c >= t.strong_threshold {
             Color::srgba(0.2, 1.0, 1.0, 0.25 + 0.5 * k)
@@ -157,7 +158,7 @@ fn draw_overlay(settings: Res<Settings>, session: Res<Session>, mut gizmos: Gizm
         };
         gizmos.rect(
             Isometry3d::new(to_world_h(p, 0.3), Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
-            Vec2::splat(sea.charge.cell * 0.9),
+            Vec2::splat(field.cell * 0.9),
             color,
         );
     }
@@ -189,27 +190,19 @@ fn draw_overlay(settings: Res<Settings>, session: Res<Session>, mut gizmos: Gizm
         }
     }
 
-    // Guidance samples.
-    for s in &sea.guidance.samples {
-        let c = sea.charge.charge[s.cell];
-        let color = if c >= t.usable_sample_threshold { css::AQUA } else { css::DARK_SLATE_GRAY };
-        gizmos.sphere(Isometry3d::from_translation(to_world_h(s.pos, 0.6)), 0.4, color);
-    }
-
-    // Entities, headings, targets, contact radii.
+    // Entities (every world), hull headings, desired headings, predator targets, contact radii.
+    let inspected = world.inspected_world();
     for e in &sea.entities {
-        let color = form_color(e.form);
+        let other_world = world.entity_world(e) != inspected;
+        let color = if other_world { css::DIM_GRAY.into() } else { form_color(e.form) };
         let p = to_world_h(e.pos, 0.5);
         gizmos.circle(Isometry3d::new(p, Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)), e.radius, color);
         gizmos.line(p, p + to_world(sim::geom::dir(e.heading)) * 4.0, color);
-        match e.brain.target {
-            Some(Target::Sample(tp)) => gizmos.line(p, to_world_h(tp, 0.6), css::WHITE),
-            Some(Target::Lantern(id)) => {
-                if let Some(o) = sea.entity(id) {
-                    gizmos.line(p, to_world_h(o.pos, 0.6), css::RED);
-                }
-            }
-            _ => {}
+        if e.form == Form::Ship && !e.brain.desired.is_nan() {
+            gizmos.line(p, p + to_world(sim::geom::dir(e.brain.desired)) * 7.0, css::WHITE);
+        }
+        if let Some(Target::Patch(tp)) = e.brain.target {
+            gizmos.line(p, to_world_h(tp, 0.6), css::RED);
         }
         if e.form == Form::Creature {
             gizmos.circle(
@@ -217,11 +210,20 @@ fn draw_overlay(settings: Res<Settings>, session: Res<Session>, mut gizmos: Gizm
                 t.creature_contact_radius,
                 css::RED,
             );
+            gizmos.circle(
+                Isometry3d::new(p, Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+                t.creature_detect_radius,
+                Color::srgba(1.0, 0.3, 0.3, 0.25),
+            );
         }
     }
 
-    // Rocks and harbor.
-    for r in &sea.rocks {
+    // Land of the inspected world and the harbor.
+    let rocks: &[sim::Circle] = match &world.rules {
+        Rules::SpiralVoyage(sv) => &sv.worlds[inspected].rocks,
+        _ => &sea.rocks,
+    };
+    for r in rocks {
         gizmos.circle(
             Isometry3d::new(to_world_h(r.center, 0.5), Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
             r.radius,
@@ -236,10 +238,20 @@ fn draw_overlay(settings: Res<Settings>, session: Res<Session>, mut gizmos: Gizm
     );
 
     if let Rules::WorldWeaver(ww) = &world.rules {
-        let pts: Vec<Vec3> = ww.route.iter().map(|p| to_world_h(*p, 0.7)).collect();
-        gizmos.linestrip(pts, css::YELLOW);
-        for a in &ww.anchors {
-            gizmos.sphere(Isometry3d::from_translation(to_world_h(a.pos, 1.0)), 0.8, css::VIOLET);
+        gizmos.sphere(Isometry3d::from_translation(to_world_h(ww.lane_start, 1.0)), 1.2, css::YELLOW);
+        if let Some(route) = &ww.playback.route {
+            let pts: Vec<Vec3> = route.iter().map(|p| to_world_h(*p, 0.7)).collect();
+            gizmos.linestrip(pts, css::YELLOW);
+        }
+        // Preview sector's land as circles even in darkness.
+        let layer = ww.layer_for(sea);
+        let sector = sea.beam.sector_index(t);
+        for r in ww.slice_geometry(layer, sector, t) {
+            gizmos.circle(
+                Isometry3d::new(to_world_h(r.center, 0.5), Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+                r.radius,
+                css::VIOLET,
+            );
         }
     }
 }
@@ -266,10 +278,10 @@ fn update_text(settings: Res<Settings>, session: Res<Session>, mut q: Query<(&mu
             sea.beam.revolution()
         )];
         lines.push(format!(
-            "samples {} usable {}  charged cells {}",
-            sea.guidance.samples.len(),
-            sea.guidance.usable(&sea.charge, &sea.tuning).count(),
-            sea.charge.charge.iter().filter(|c| **c > 0.0).count()
+            "inspected world {}  charged cells {}  dusk {:.2}",
+            world.inspected_world() + 1,
+            world.view_charge().charge.iter().filter(|c| **c > 0.0).count(),
+            world.dusk()
         ));
         for e in &sea.entities {
             let timer = e
@@ -277,25 +289,42 @@ fn update_text(settings: Res<Settings>, session: Res<Session>, mut q: Query<(&mu
                 .map(|m| format!("  timer {:.1}/{:.0}{}", m.progress, mutable_sea::dark_duration(e.form, sea), if m.deferred { " deferred" } else { "" }))
                 .unwrap_or_default();
             lines.push(format!(
-                "{:<11} {:<8} {:?} ({:6.1},{:6.1}) hdg {:5.1}° {:?}{}",
+                "{:<11} {:<8} {:?} ({:6.1},{:6.1}) hdg {:5.1}° want {:5.1}° score {:5.1} world {} {:?}{}",
                 e.name,
                 e.form.name(),
                 e.status,
                 e.pos.x,
                 e.pos.y,
                 e.heading.to_degrees(),
+                e.brain.desired.to_degrees(),
+                e.brain.desired_score,
+                world.entity_world(e) + 1,
                 e.brain.target,
                 timer
             ));
         }
-        if let Rules::WorldWeaver(ww) = &world.rules {
-            lines.push(format!(
-                "weaver layer {} sector {} committed {:?}",
-                ww.layer_for(sea),
-                sea.beam.sector_index(&sea.tuning),
-                ww.committed
-            ));
-            lines.push(format!("voyage {:?}", ww.voyage));
+        match &world.rules {
+            Rules::WorldWeaver(ww) => {
+                let edited: Vec<usize> = ww.edited.iter().enumerate().filter(|(_, e)| **e).map(|(s, _)| s + 1).collect();
+                lines.push(format!(
+                    "weaver inspecting world {} sector {}  edited sectors {:?}  route {:?} speed {:.1}",
+                    ww.layer_for(sea) + 1,
+                    sea.beam.sector_index(&sea.tuning) + 1,
+                    edited,
+                    ww.playback.route.as_ref().map(|r| r.len()),
+                    ww.playback.speed
+                ));
+            }
+            Rules::SpiralVoyage(sv) => {
+                lines.push(format!(
+                    "spiral beam winding {:.2} (world {})  ship world {:?}  end {:?}",
+                    sea.beam.winding,
+                    sv.beam_world(sea) + 1,
+                    sv.ship_world(sea).map(|w| w + 1),
+                    sv.end
+                ));
+            }
+            _ => {}
         }
         text.0 = lines.join("\n");
     }

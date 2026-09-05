@@ -62,6 +62,71 @@ impl ChargeField {
         self.charge_at(p) >= tuning.strong_threshold
     }
 
+    pub fn is_land(&self, p: Vec2) -> bool {
+        self.index_of(p).is_some_and(|i| !self.sea[i])
+    }
+
+    /// Strongest glow touching a silhouette: the centre plus four points on its radius.
+    pub fn glow_around(&self, center: Vec2, radius: f32) -> f32 {
+        let mut best = self.charge_at(center);
+        for k in 0..4 {
+            let a = k as f32 * std::f32::consts::FRAC_PI_2;
+            best = best.max(self.charge_at(center + Vec2::new(a.cos(), a.sin()) * radius));
+        }
+        best
+    }
+
+    /// The predator eats: remove charge from every cell within `radius` of `center`.
+    pub fn consume(&mut self, center: Vec2, radius: f32, amount: f32) {
+        let lo = ((center - Vec2::splat(radius) - self.origin) / self.cell).floor();
+        let hi = ((center + Vec2::splat(radius) - self.origin) / self.cell).ceil();
+        let i0 = lo.x.max(0.0) as usize;
+        let j0 = lo.y.max(0.0) as usize;
+        let i1 = (hi.x.max(0.0) as usize).min(self.size);
+        let j1 = (hi.y.max(0.0) as usize).min(self.size);
+        let r2 = radius * radius;
+        for j in j0..j1 {
+            for i in i0..i1 {
+                let idx = j * self.size + i;
+                if self.cell_center(idx).distance_squared(center) <= r2 {
+                    self.charge[idx] = (self.charge[idx] - amount).max(0.0);
+                }
+            }
+        }
+    }
+
+    /// Brightest charged cell within `radius` of `from` that holds at least `min` charge,
+    /// scored by charge falling off with distance. Returns (centre, charge).
+    pub fn strongest_within(&self, from: Vec2, radius: f32, min: f32) -> Option<(Vec2, f32)> {
+        let lo = ((from - Vec2::splat(radius) - self.origin) / self.cell).floor();
+        let hi = ((from + Vec2::splat(radius) - self.origin) / self.cell).ceil();
+        let i0 = lo.x.max(0.0) as usize;
+        let j0 = lo.y.max(0.0) as usize;
+        let i1 = (hi.x.max(0.0) as usize).min(self.size);
+        let j1 = (hi.y.max(0.0) as usize).min(self.size);
+        let r2 = radius * radius;
+        let mut best: Option<(f32, Vec2, f32)> = None;
+        for j in j0..j1 {
+            for i in i0..i1 {
+                let idx = j * self.size + i;
+                let c = self.charge[idx];
+                if c < min {
+                    continue;
+                }
+                let p = self.cell_center(idx);
+                let d2 = p.distance_squared(from);
+                if d2 > r2 {
+                    continue;
+                }
+                let score = c / (1.0 + d2.sqrt() / 20.0);
+                if best.is_none_or(|(s, _, _)| score > s) {
+                    best = Some((score, p, c));
+                }
+            }
+        }
+        best.map(|(_, p, c)| (p, c))
+    }
+
     /// Advance decay everywhere and charge under the footprint.
     pub fn step(&mut self, footprint: Option<&Footprint>, tuning: &Tuning, dt: f32) {
         for c in &mut self.charge {

@@ -15,7 +15,7 @@ pub enum AppState {
 }
 
 /// Player-facing settings and developer toggles, kept across sessions.
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone)]
 pub struct Settings {
     /// Added exposure stops; positive brightens the whole image for dim monitors.
     pub brightness: f32,
@@ -24,6 +24,20 @@ pub struct Settings {
     pub debug_overlay: bool,
     /// Developer autopilot (F9): the scripted keeper plays the scenario.
     pub autopilot: bool,
+    /// Desired-heading dial lines on observable ships (F5). On by default in prototype play.
+    pub heading_lines: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            brightness: 0.0,
+            constant_speed_rotation: false,
+            debug_overlay: false,
+            autopilot: false,
+            heading_lines: true,
+        }
+    }
 }
 
 #[derive(Resource, Default)]
@@ -116,6 +130,9 @@ fn global_hotkeys(keys: Res<ButtonInput<KeyCode>>, mut settings: ResMut<Settings
     if keys.just_pressed(KeyCode::F9) {
         settings.autopilot = !settings.autopilot;
     }
+    if keys.just_pressed(KeyCode::F5) {
+        settings.heading_lines = !settings.heading_lines;
+    }
 }
 
 /// `FIRST_LIGHT_AUTOPLAY=nightwatch|mutablesea|worldweaver` starts that mode on the autopilot.
@@ -129,6 +146,7 @@ fn autoplay_from_env(
         "nightwatch" | "nw" => Mode::NightWatch,
         "mutablesea" | "ms" => Mode::MutableSea,
         "worldweaver" | "ww" => Mode::WorldWeaver,
+        "spiralvoyage" | "sv" => Mode::SpiralVoyage,
         _ => return,
     };
     settings.autopilot = true;

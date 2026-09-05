@@ -99,7 +99,7 @@ fn spawn_menu(mut commands: Commands, menu: Res<MenuState>) {
                     ..default()
                 },
             ));
-            for (i, mode) in Mode::ALL.iter().enumerate() {
+            for (i, mode) in Mode::MENU.iter().enumerate() {
                 root.spawn((
                     MenuEntry(i),
                     Text::new(format!("{}   {}", mode.title(), mode.tagline())),
@@ -130,7 +130,7 @@ fn menu_input(
     mut session: ResMut<Session>,
     mut next: ResMut<NextState<AppState>>,
 ) {
-    let n = Mode::ALL.len();
+    let n = Mode::MENU.len();
     if keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::KeyS) {
         menu.selected = (menu.selected + 1) % n;
     }
@@ -141,7 +141,7 @@ fn menu_input(
         color.0 = if entry.0 == menu.selected { INK } else { DIM };
     }
     if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
-        session.start(Mode::ALL[menu.selected]);
+        session.start(Mode::MENU[menu.selected]);
         next.set(AppState::Playing);
     }
 }
@@ -292,17 +292,14 @@ fn update_hud(
 ) {
     let Some(world) = session.world() else { return };
     let phase_text = match world.phase {
-        Phase::Intro { .. } => "The beacon is lit.".to_string(),
-        Phase::Night => {
-            let r = world.night_remaining();
-            format!("Night remaining  {:01}:{:02}", (r / 60.0) as u32, (r % 60.0) as u32)
-        }
+        Phase::Intro { .. } => "Dusk. The beacon is lit.".to_string(),
+        Phase::Night => match world.night_remaining() {
+            Some(r) => format!("Night remaining  {:01}:{:02}", (r / 60.0) as u32, (r % 60.0) as u32),
+            None => "The voyage is under way.".to_string(),
+        },
         Phase::Dawn { .. } => "First light.".into(),
         Phase::Playback => match &world.rules {
-            Rules::WorldWeaver(ww) => {
-                let left = world.tuning().world_weaver_playback_limit - ww.voyage.elapsed;
-                format!("The expedition sails  {:02}s", left.max(0.0) as u32)
-            }
+            Rules::WorldWeaver(ww) => format!("The ship sails  {:02}s", ww.playback.elapsed as u32),
             _ => String::new(),
         },
         Phase::Finished => String::new(),
@@ -322,9 +319,10 @@ fn update_hud(
             format!("Secured {secured} / {}  (need {})", ms.identities.len(), ms.target_rescues)
         }
         Rules::WorldWeaver(ww) => {
-            let captured = ww.committed.iter().filter(|c| c.is_some()).count();
-            format!("Captured {captured} / {}", ww.committed.len())
+            let edited = ww.edited.iter().filter(|e| **e).count();
+            format!("Sectors copied into World 1: {edited} / {}", ww.edited.len())
         }
+        Rules::SpiralVoyage(sv) => format!("Harbor: World {}", sv.worlds.len()),
     };
     for mut t in &mut score {
         t.0 = score_text.clone();
@@ -334,16 +332,22 @@ fn update_hud(
         Rules::WorldWeaver(ww) if world.phase == Phase::Night => {
             let layer = ww.layer_for(&world.sea) as usize;
             let sector = world.sea.beam.sector_index(world.tuning());
-            let committed = ww.committed[sector]
-                .map(|l| format!("saved {}", world_weaver::LAYER_GLYPHS[l as usize]))
-                .unwrap_or_else(|| "unsaved".into());
+            let state = if layer == 0 {
+                if ww.edited[sector] { "assembled, edited" } else { "assembled, baseline" }
+            } else if ww.edited[sector] {
+                "sector edited in World 1"
+            } else {
+                "sector unedited"
+            };
             format!(
-                "Layer {} {}    Sector {}  ({})",
-                world_weaver::LAYER_GLYPHS[layer],
+                "Inspecting {} ({})    Sector {}  ({state})",
                 world_weaver::LAYER_NAMES[layer],
-                sector + 1,
-                committed
+                world_weaver::LAYER_GLYPHS[layer],
+                sector + 1
             )
+        }
+        Rules::SpiralVoyage(sv) if matches!(world.phase, Phase::Night | Phase::Intro { .. }) => {
+            format!("Inspecting World {} of {}", world.inspected_world() + 1, sv.worlds.len())
         }
         _ => String::new(),
     };
@@ -353,7 +357,7 @@ fn update_hud(
     let hint_text = match world.phase {
         Phase::Intro { .. } | Phase::Night => world.mode.controls(),
         Phase::Dawn { .. } => "First light. The sea is revealed.",
-        Phase::Playback => "The expedition sails the lane you prepared.    Esc pause",
+        Phase::Playback => "The ship follows the passage it found through your sea.    Esc pause",
         Phase::Finished => "",
     };
     for mut t in &mut hint {
@@ -409,16 +413,16 @@ fn push_toasts(
                 )
             }
             sim::Event::Captured { sector, layer } => format!(
-                "Sector {} captured as {}.",
+                "Sector {} copied from {} into World 1.",
                 sector + 1,
                 world_weaver::LAYER_NAMES[*layer as usize]
             ),
-            sim::Event::LayerChanged { layer } => format!("Layer {}: {}", world_weaver::LAYER_GLYPHS[*layer as usize], world_weaver::LAYER_NAMES[*layer as usize]),
+            sim::Event::AssembledWorld => "Assembled world.".into(),
+            sim::Event::LayerChanged { layer } => format!("Inspecting World {}", *layer as usize + 1),
+            sim::Event::NoPassage => "No passage to harbor.".into(),
+            sim::Event::ShipCrossed { world: w } => format!("The Wayfarer crossed into World {}.", *w as usize + 1),
             sim::Event::CreatureAppears { pos, .. } => format!("Something stirs in the {} dark. It follows the brightest light it can see.", sim::geom::compass_word(*pos)),
-            sim::Event::VoyageBegins => "The expedition sets out.".into(),
-            sim::Event::VoyageDelay { .. } => "A wreck fouls the lane. Salvage.".into(),
-            sim::Event::VoyageJoined { id, .. } => format!("{} joins the expedition.", name(*id)),
-            sim::Event::VoyageBlocked { .. } => "An island blocks the lane.".into(),
+            sim::Event::VoyageBegins => "The ship enters from the shipping lane.".into(),
             _ => continue,
         };
         commands.spawn((

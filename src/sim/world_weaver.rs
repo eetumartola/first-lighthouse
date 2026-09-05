@@ -1,204 +1,189 @@
-//! Variant 3 — World Weaver: browse four authored layers by winding the beam, capture sectors,
-//! then watch the assembled world tested by a fixed voyage at first light.
+//! Variant 3 — World Weaver as maze assembler. World 1 is the sea the ship will sail; Worlds 2–4
+//! hold stable alternative sectors. Space copies the previewed sector's land into World 1. At
+//! dawn a route finder looks for any hull-clearance passage from the shipping lane to the harbor.
 
 use super::beam::Input;
 use super::entity::{EntityId, Form, Status, Target};
-use super::geom::{bearing_of, compass_word, dir, turn_toward, Circle};
+use super::geom::{bearing_of, compass_word, Circle};
+use super::islands;
+use super::route;
 use super::steering;
 use super::tuning::Tuning;
 use super::{Cause, Event, Outcome, Sea};
 use glam::Vec2;
 
-#[derive(Clone, Copy, Debug)]
-pub struct Anchor {
-    pub name: &'static str,
-    pub pos: Vec2,
-    pub sector: usize,
-    /// Cycle offset: form in layer `l` is `CYCLE[(phase + l) % 4]`.
-    pub phase: u8,
+pub const LAYER_NAMES: [&str; 4] = ["World 1", "World 2", "World 3", "World 4"];
+pub const LAYER_GLYPHS: [&str; 4] = ["I", "II", "III", "IV"];
+
+/// One sector's land vocabulary: an outer reef band, an inner reef band, and an optional radial
+/// wall between them. Gaps in the bands are the passages; walls block the ring channel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Piece {
+    pub outer_gap: bool,
+    pub inner_gap: bool,
+    pub wall: bool,
 }
 
-impl Anchor {
-    pub fn form_in(&self, layer: u8) -> Form {
-        Form::CYCLE[(self.phase as usize + layer as usize) % 4]
+pub const OUTER_R: f32 = 72.0;
+pub const INNER_R: f32 = 30.0;
+
+impl Piece {
+    const fn new(outer_gap: bool, inner_gap: bool, wall: bool) -> Self {
+        Self { outer_gap, inner_gap, wall }
+    }
+
+    /// Rock circles for this piece in `sector`. Centres stay inside the sector; bands meet their
+    /// neighbours at the seams so coastlines read as continuous.
+    pub fn geometry(self, sector: usize, t: &Tuning) -> Vec<Circle> {
+        let a = t.sector_angle().to_degrees();
+        let mid = sector as f32 * a + a * 0.5;
+        let half = a * 0.5 - 1.0;
+        let mut rocks = Vec::new();
+        let band = |r: f32, rock: f32, gap: Option<f32>| -> Vec<Circle> {
+            islands::arc(r, mid - half, mid + half, rock)
+                .into_iter()
+                .filter(|c| {
+                    let deg = bearing_of(c.center).to_degrees();
+                    let off = ((deg - mid + 540.0) % 360.0) - 180.0;
+                    gap.is_none_or(|g| off.abs() > g)
+                })
+                .collect()
+        };
+        rocks.extend(band(OUTER_R, 3.0, self.outer_gap.then_some(10.0)));
+        rocks.extend(band(INNER_R, 2.6, self.inner_gap.then_some(14.0)));
+        if self.wall {
+            rocks.extend(islands::radial(mid, INNER_R + 3.0, 9, 4.0, 2.6));
+        }
+        rocks
     }
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct Voyage {
+pub struct Playback {
+    pub route: Option<Vec<Vec2>>,
+    pub speed: f32,
     pub elapsed: f32,
-    pub expedition: Option<EntityId>,
-    pub followers: Vec<EntityId>,
-    pub delay_remaining: f32,
-    pub handled_wrecks: Vec<EntityId>,
-    pub failure: Option<String>,
+    pub ship: Option<EntityId>,
     pub arrived: bool,
-}
-
-/// A connected chain of rocks that exists in one sector of one layer only.
-#[derive(Clone, Debug)]
-pub struct Reef {
-    pub sector: usize,
-    pub layer: u8,
-    pub rocks: Vec<Circle>,
-}
-
-impl Reef {
-    /// `count` rocks of `radius` starting at `start`, each `step` further along; overlapping
-    /// edges make the chain read as one connected reef.
-    fn chain(sector: usize, layer: u8, start: Vec2, step: Vec2, count: usize, radius: f32) -> Self {
-        Self {
-            sector,
-            layer,
-            rocks: (0..count).map(|i| Circle::new(start + step * i as f32, radius)).collect(),
-        }
-    }
+    pub failure: Option<String>,
+    /// Short beat after a failure before the result shows.
+    pub beat: f32,
 }
 
 #[derive(Clone, Debug)]
 pub struct WorldWeaver {
-    pub anchors: Vec<Anchor>,
-    /// Layer-specific rock geometry, so each layer of a sector is a different sea.
-    pub reefs: Vec<Reef>,
-    /// Committed layer per sector; `None` uses the stated default at dawn.
-    pub committed: Vec<Option<u8>>,
-    /// Authored sea lane, ending at the harbor.
-    pub route: Vec<Vec2>,
+    /// Sector vocabulary per world; index 0 is World 1's immutable baseline.
+    pub worlds: Vec<Vec<Piece>>,
+    /// World 1 as currently assembled (mutable; restart rebuilds it from the baseline).
+    pub assembled: Vec<Piece>,
+    /// Which sectors have been edited (outer-edge markers).
+    pub edited: Vec<bool>,
+    /// Marked start inside the shipping-lane entrance, and the heading into the sea.
+    pub lane_start: Vec2,
+    pub lane_heading: f32,
     pub last_layer: u8,
-    pub voyage: Voyage,
-    /// Composition frozen at dawn: layer used per sector.
-    pub built: Option<Vec<u8>>,
+    pub playback: Playback,
+    /// Composition frozen at dawn.
+    pub built: Option<Vec<Piece>>,
 }
 
-pub const LAYER_NAMES: [&str; 4] = ["Calm", "Tide", "Deep", "Storm"];
-pub const LAYER_GLYPHS: [&str; 4] = ["I", "II", "III", "IV"];
-
 impl WorldWeaver {
-    pub fn scenario(t: &Tuning) -> (Self, Vec<Circle>) {
-        let d = |deg: f32, r: f32| dir(deg.to_radians()) * r;
-        let rocks = vec![
-            Circle::new(d(315.0, 56.0), 5.0),
-            Circle::new(d(250.0, 58.0), 4.5),
-            Circle::new(d(15.0, 77.0), 4.0),
-        ];
-        // The lane crosses sectors 1–6 clockwise and enters the harbor from the south.
-        let route = vec![
-            d(40.0, 92.0),
-            d(45.0, 60.0),
-            d(75.0, 48.0),
-            d(105.0, 45.0),
-            d(135.0, 42.0),
-            d(165.0, 38.0),
-            Vec2::new(0.0, -28.0),
-            t.harbor_center + Vec2::new(0.0, -1.0),
-        ];
-        let anchors = vec![
-            Anchor { name: "Gull", pos: d(45.0, 60.0), sector: 1, phase: 3 },
-            Anchor { name: "Tern", pos: d(75.0, 48.0), sector: 2, phase: 1 },
-            Anchor { name: "Skua", pos: d(100.0, 53.0), sector: 3, phase: 2 },
-            Anchor { name: "Petrel", pos: d(105.0, 45.0), sector: 3, phase: 3 },
-            Anchor { name: "Fulmar", pos: d(135.0, 42.0), sector: 4, phase: 0 },
-            Anchor { name: "Gannet", pos: d(140.0, 50.0), sector: 4, phase: 2 },
-            Anchor { name: "Shearwater", pos: d(165.0, 38.0), sector: 5, phase: 1 },
-            Anchor { name: "Puffin", pos: d(195.0, 30.0), sector: 6, phase: 2 },
-        ];
-        // Reefs. Each lane sector has one layer whose reef lies across the lane (authored in
-        // Cartesian coordinates, perpendicular to the lane); every other reef keeps clear of it.
-        // Decorative reefs run radially near a sector's middle so they never straddle a seam.
-        // Outer sectors change geometry too, so the layers read as different seas everywhere.
-        let radial = |sector: usize, layer: u8, bearing: f32, r0: f32, count: usize, spacing: f32, radius: f32| {
-            Reef::chain(sector, layer, d(bearing, r0), dir(bearing.to_radians()) * spacing, count, radius)
-        };
-        let reefs = vec![
-            radial(0, 0, 10.0, 62.0, 3, 5.0, 3.0),
-            radial(0, 1, 20.0, 40.0, 4, 4.5, 2.5),
-            radial(0, 2, 8.0, 80.0, 3, 4.5, 2.6),
-            radial(0, 3, 22.0, 50.0, 3, 5.0, 3.0),
-            // Sector 1: layer III reef across the lane near r 75.
-            radial(1, 0, 38.0, 22.0, 3, 4.5, 2.5),
-            radial(1, 1, 52.0, 24.0, 3, 4.5, 2.5),
-            Reef::chain(1, 2, Vec2::new(41.6, 60.8), Vec2::new(4.3, -2.55), 5, 3.0),
-            radial(1, 3, 40.0, 20.0, 3, 4.5, 2.5),
-            // Sector 2: layer I reef across the lane near r 49.
-            Reef::chain(2, 0, Vec2::new(38.2, 17.4), Vec2::new(4.95, 0.65), 4, 3.0),
-            radial(2, 1, 70.0, 22.0, 3, 4.5, 2.5),
-            radial(2, 2, 82.0, 78.0, 3, 5.0, 3.0),
-            radial(2, 3, 68.0, 66.0, 3, 4.5, 2.5),
-            // Sector 3: layer IV reef across the lane near r 45.
-            radial(3, 0, 98.0, 22.0, 3, 4.5, 2.5),
-            radial(3, 1, 112.0, 76.0, 3, 5.0, 3.0),
-            radial(3, 2, 116.0, 60.0, 3, 4.5, 2.5),
-            Reef::chain(3, 3, Vec2::new(36.5, -7.1), Vec2::new(4.95, -0.6), 4, 3.0),
-            // Sector 4: layer III reef across the lane near r 42.
-            radial(4, 0, 128.0, 20.0, 3, 4.5, 2.5),
-            radial(4, 1, 142.0, 72.0, 3, 5.0, 3.0),
-            Reef::chain(4, 2, Vec2::new(26.6, -21.5), Vec2::new(3.95, -3.05), 4, 3.0),
-            radial(4, 3, 127.0, 62.0, 3, 5.0, 3.0),
-            // Sector 5: layer II reef across the lane near r 38.
-            radial(5, 0, 158.0, 58.0, 3, 4.5, 2.5),
-            Reef::chain(5, 1, Vec2::new(12.2, -30.6), Vec2::new(1.65, -4.7), 3, 3.0),
-            radial(5, 2, 172.0, 56.0, 2, 4.5, 2.5),
-            radial(5, 3, 165.0, 72.0, 3, 5.0, 3.0),
-            // Sector 6: layer IV reef across the harbor approach.
-            radial(6, 0, 192.0, 40.0, 3, 4.5, 2.5),
-            radial(6, 1, 202.0, 62.0, 3, 5.0, 3.0),
-            radial(6, 2, 188.0, 78.0, 3, 4.5, 2.6),
-            Reef::chain(6, 3, Vec2::new(-3.6, -22.5), Vec2::new(-0.8, -4.5), 3, 2.8),
-            // Sectors 7–11: decoration only.
-            radial(7, 0, 220.0, 62.0, 4, 5.0, 3.0),
-            radial(7, 1, 232.0, 36.0, 3, 4.5, 2.5),
-            radial(7, 2, 218.0, 48.0, 3, 5.0, 3.0),
-            radial(7, 3, 236.0, 80.0, 3, 4.5, 2.6),
-            radial(8, 0, 262.0, 30.0, 3, 4.5, 2.5),
-            radial(8, 1, 256.0, 72.0, 4, 5.0, 3.0),
-            radial(8, 2, 248.0, 38.0, 3, 4.5, 2.5),
-            radial(8, 3, 264.0, 52.0, 3, 5.0, 3.0),
-            radial(9, 0, 285.0, 50.0, 3, 5.0, 3.0),
-            radial(9, 1, 292.0, 76.0, 4, 5.0, 3.0),
-            radial(9, 2, 278.0, 28.0, 3, 4.5, 2.5),
-            radial(9, 3, 294.0, 40.0, 3, 4.5, 2.5),
-            radial(10, 0, 322.0, 74.0, 3, 5.0, 3.0),
-            radial(10, 1, 308.0, 34.0, 3, 4.5, 2.5),
-            radial(10, 2, 318.0, 24.0, 3, 4.5, 2.5),
-            radial(10, 3, 326.0, 66.0, 4, 5.0, 3.0),
-            radial(11, 0, 345.0, 46.0, 3, 5.0, 3.0),
-            radial(11, 1, 338.0, 70.0, 3, 5.0, 3.0),
-            radial(11, 2, 352.0, 30.0, 3, 4.5, 2.5),
-            radial(11, 3, 342.0, 84.0, 3, 4.5, 2.6),
-        ];
-        (
-            Self {
-                anchors,
-                reefs,
-                committed: vec![None; t.weaver_sectors],
-                route,
-                last_layer: 0,
-                voyage: Voyage::default(),
-                built: None,
-            },
-            rocks,
-        )
+    pub fn scenario(t: &Tuning) -> Self {
+        let p = Piece::new;
+        let plain = p(false, false, false);
+        // World 1 baseline: the lane enters through sector 1's outer gap (the only way in from
+        // open water), the only inner gap is at the harbor sector, and radial walls at 3 and 10
+        // seal both ways round the channel.
+        let mut world1 = vec![plain; 12];
+        world1[1] = p(true, false, false);
+        world1[3] = p(false, false, true);
+        world1[6] = p(false, true, false);
+        world1[10] = p(false, false, true);
+        // World 2: opens the east (sector 3) with an inner shortcut, but walls 5 and 8.
+        let mut world2 = vec![plain; 12];
+        world2[0] = p(false, true, false);
+        world2[3] = p(false, true, false);
+        world2[4] = p(true, false, false);
+        world2[5] = p(false, false, true);
+        world2[8] = p(false, false, true);
+        world2[9] = p(true, false, false);
+        world2[11] = p(true, false, false);
+        // World 3: opens the west (sector 10), but walls 2 and 6 and closes the harbor gap there.
+        let mut world3 = vec![plain; 12];
+        world3[2] = p(false, false, true);
+        world3[6] = p(false, false, true);
+        world3[7] = p(true, false, false);
+        world3[9] = p(false, true, false);
+        world3[10] = p(true, false, false);
+        world3[1] = p(true, false, false);
+        // World 4: walls at 3 and 10 again, inner gaps at 2 and 8 (lagoon shortcuts).
+        let mut world4 = vec![plain; 12];
+        world4[2] = p(false, true, false);
+        world4[3] = p(false, false, true);
+        world4[8] = p(false, true, false);
+        world4[10] = p(false, false, true);
+        world4[1] = p(false, false, false); // copying this closes the entrance: a real mistake
+        world4[5] = p(true, false, false);
+        Self {
+            worlds: vec![world1.clone(), world2, world3, world4],
+            assembled: world1,
+            edited: vec![false; t.weaver_sectors],
+            lane_start: islands::polar(45.0, 92.0),
+            lane_heading: 225f32.to_radians(),
+            last_layer: 0,
+            playback: Playback::default(),
+            built: None,
+        }
     }
 
-    /// Layer index for the beam's current total winding (cyclic over the authored layers).
+    /// Index of the world the beam currently inspects (cyclic over the four).
     pub fn layer_for(&self, sea: &Sea) -> u8 {
         sea.beam.revolution().rem_euclid(sea.tuning.weaver_layers as i32) as u8
     }
 
-    /// Candidate forms shown in the active preview sector.
-    pub fn preview(&self, sector: usize, layer: u8) -> impl Iterator<Item = (&Anchor, Form)> + '_ {
-        self.anchors
-            .iter()
-            .filter(move |a| a.sector == sector)
-            .map(move |a| (a, a.form_in(layer)))
+    /// Piece shown for a sector when inspecting `layer`: World 1 shows the assembled result.
+    pub fn piece(&self, layer: u8, sector: usize) -> Piece {
+        if layer == 0 {
+            self.assembled[sector]
+        } else {
+            self.worlds[layer as usize][sector]
+        }
     }
 
-    pub fn layer_used(&self, sector: usize, t: &Tuning) -> u8 {
-        self.committed[sector].unwrap_or(t.weaver_default_layer)
+    /// Land of one previewed slice.
+    pub fn slice_geometry(&self, layer: u8, sector: usize, t: &Tuning) -> Vec<Circle> {
+        self.piece(layer, sector).geometry(sector, t)
+    }
+
+    /// All land of an assembled composition (every sector).
+    pub fn composition_land(pieces: &[Piece], t: &Tuning) -> Vec<Circle> {
+        pieces
+            .iter()
+            .enumerate()
+            .flat_map(|(s, p)| p.geometry(s, t))
+            .collect()
+    }
+
+    pub fn harbor_goal(t: &Tuning) -> Vec2 {
+        t.harbor_center
+    }
+
+    /// Route finder over a composition, from the lane start to the harbor.
+    pub fn find_passage(&self, pieces: &[Piece], t: &Tuning) -> Option<Vec<Vec2>> {
+        let mut land = vec![Circle::new(Vec2::ZERO, t.island_radius)];
+        land.extend(Self::composition_land(pieces, t));
+        route::find_route(
+            &land,
+            t.sea_radius,
+            t.weaver_route_cell,
+            t.ship_radius + t.weaver_route_margin,
+            self.lane_start,
+            Self::harbor_goal(t),
+        )
     }
 }
 
-pub fn step_night(ww: &mut WorldWeaver, sea: &mut Sea, input: Input, _dt: f32) {
+pub fn step_night(ww: &mut WorldWeaver, sea: &mut Sea, input: Input) {
     let layer = ww.layer_for(sea);
     if layer != ww.last_layer {
         ww.last_layer = layer;
@@ -206,228 +191,135 @@ pub fn step_night(ww: &mut WorldWeaver, sea: &mut Sea, input: Input, _dt: f32) {
     }
     if input.capture {
         let sector = sea.beam.sector_index(&sea.tuning);
-        ww.committed[sector] = Some(layer);
-        let fp = sea.beam.footprint(&sea.tuning);
-        sea.charge.stamp(&fp, sea.tuning.weaver_capture_glow);
-        sea.events.push(Event::Captured { sector, layer });
+        if layer == 0 {
+            sea.events.push(Event::AssembledWorld);
+        } else {
+            // Copy, not swap: the source world is untouched.
+            ww.assembled[sector] = ww.worlds[layer as usize][sector];
+            ww.edited[sector] = true;
+            let fp = sea.beam.footprint(&sea.tuning);
+            sea.charge.stamp(&fp, sea.tuning.weaver_capture_glow);
+            sea.events.push(Event::Captured { sector, layer });
+        }
     }
 }
 
-/// Dawn: freeze commitments, instantiate exactly one entity per anchor, and lay the chosen reefs.
+/// Dawn: freeze exactly the current World 1, lay its land, and look for a passage.
 pub fn freeze_and_build(ww: &mut WorldWeaver, sea: &mut Sea) {
     let t = sea.tuning.clone();
-    let built: Vec<u8> = (0..t.weaver_sectors).map(|s| ww.layer_used(s, &t)).collect();
-    for a in ww.anchors.clone() {
-        let form = a.form_in(built[a.sector]);
-        // Idle candidate ships point along the lane so joining looks natural.
-        let heading = bearing_of(-a.pos) + std::f32::consts::FRAC_PI_2;
-        sea.spawn(a.name, form, a.pos, heading);
-    }
-    let chosen: Vec<Circle> = ww
-        .reefs
-        .iter()
-        .filter(|r| built[r.sector] == r.layer)
-        .flat_map(|r| r.rocks.iter().copied())
-        .collect();
-    sea.charge.add_land(&chosen);
-    sea.rocks.extend(chosen);
-    ww.built = Some(built);
-    let start = ww.route[0];
-    let heading = bearing_of(ww.route[1] - start);
-    let id = sea.spawn("Expedition", Form::Ship, start, heading);
+    let built = ww.assembled.clone();
+    let land = WorldWeaver::composition_land(&built, &t);
+    sea.charge.add_land(&land);
+    sea.rocks.extend(land);
+    let route = ww.find_passage(&built, &t);
+    let speed = route
+        .as_ref()
+        .map(|r| (route::length(r) / t.weaver_playback_target).max(t.weaver_playback_min_speed))
+        .unwrap_or(t.weaver_playback_min_speed);
+    let id = sea.spawn("Expedition", Form::Ship, ww.lane_start, ww.lane_heading);
     if let Some(e) = sea.entity_mut(id) {
         e.brain.target = Some(Target::Waypoint(1));
+        e.brain.desired = ww.lane_heading;
     }
-    ww.voyage = Voyage {
-        expedition: Some(id),
+    ww.built = Some(built);
+    ww.playback = Playback {
+        route,
+        speed,
+        ship: Some(id),
         ..Default::default()
     };
 }
 
-pub fn begin_voyage(_ww: &mut WorldWeaver, sea: &mut Sea) {
+pub fn begin_voyage(ww: &mut WorldWeaver, sea: &mut Sea) {
     sea.events.push(Event::VoyageBegins);
+    if ww.playback.route.is_none() {
+        sea.events.push(Event::NoPassage);
+    }
 }
 
 /// Returns true when the voyage has resolved.
 pub fn step_playback(ww: &mut WorldWeaver, sea: &mut Sea, dt: f32) -> bool {
     let t = sea.tuning.clone();
-    let v = &mut ww.voyage;
-    let Some(ex_id) = v.expedition else { return true };
-    v.elapsed += dt;
-    if v.elapsed > t.world_weaver_playback_limit {
-        v.failure = Some("First light faded before the expedition reached harbor.".into());
+    let pb = &mut ww.playback;
+    let Some(ship_id) = pb.ship else { return true };
+    pb.elapsed += dt;
+    let Some(idx) = sea.entities.iter().position(|e| e.id == ship_id) else { return true };
+
+    // A failure plays a short beat (drifting or sinking) before the result.
+    if pb.failure.is_some() {
+        pb.beat += dt;
+        return pb.beat >= 2.5;
+    }
+    let Some(route) = pb.route.clone() else {
+        // No passage: the ship holds at the lane entrance for a beat, then the result explains.
+        pb.failure = Some("No passage to harbor.".into());
+        return false;
+    };
+
+    let harbor = sea.harbor();
+    let arrived = steering::steer_along_route(&mut sea.entities[idx], &route, pb.speed, 140.0, dt);
+    let hull = sea.entities[idx].circle();
+    if arrived || harbor.contains(hull.center) {
+        pb.arrived = true;
+        sea.events.push(Event::VoyageArrived);
+        sea.secure(ship_id);
         return true;
     }
-
-    let Some(ex_idx) = sea.entities.iter().position(|e| e.id == ex_id) else { return true };
-
-    if v.delay_remaining > 0.0 {
-        v.delay_remaining -= dt;
-    } else {
-        // Wrecks on the lane cost a salvage delay once each.
-        let ex_pos = sea.entities[ex_idx].pos;
-        let wreck = sea.entities.iter().find(|o| {
-            o.is_active()
-                && o.form == Form::Wreck
-                && !v.handled_wrecks.contains(&o.id)
-                && o.pos.distance(ex_pos) <= t.weaver_wreck_radius
-        });
-        if let Some(w) = wreck {
-            v.handled_wrecks.push(w.id);
-            v.delay_remaining = t.weaver_wreck_delay;
-            sea.events.push(Event::VoyageDelay { pos: w.pos });
-        } else {
-            let route = ww.route.clone();
-            let harbor = sea.harbor();
-            let ex = &mut sea.entities[ex_idx];
-            let arrived = steering::steer_along_route(ex, &route, t.weaver_voyage_speed, 90.0, dt);
-            let hull = ex.circle();
-            if arrived || harbor.contains(ex.pos) {
-                v.arrived = true;
-                sea.events.push(Event::VoyageArrived);
-                sea.secure(ex_id);
-                for f in v.followers.clone() {
-                    if sea.entity(f).is_some_and(|e| e.is_active()) {
-                        sea.secure(f);
-                    }
-                }
-                return true;
-            }
-            // Grounding: an island from the composition or a reef across the lane ends the voyage.
-            let island = sea
-                .entities
-                .iter()
-                .find(|o| o.id != ex_id && o.is_active() && o.form == Form::Island && o.circle().overlaps(&hull))
-                .map(|o| (o.pos, "island"));
-            let reef = sea
-                .rocks
-                .iter()
-                .find(|r| r.overlaps(&hull))
-                .map(|r| (r.center, "rocks"));
-            if let Some((pos, what)) = island.or(reef) {
-                v.failure = Some(format!("The {} {what} blocked the route.", compass_word(pos)));
-                sea.events.push(Event::VoyageBlocked { pos });
-                return true;
-            }
-        }
+    if let Some(rock) = sea.rocks.iter().find(|r| r.overlaps(&hull)).copied() {
+        sea.entities[idx].status = Status::Sunk;
+        sea.events.push(Event::Sunk { id: ship_id, pos: hull.center, cause: Cause::Rock });
+        pb.failure = Some(format!("The ship struck the {} rocks.", compass_word(rock.center)));
+        return false;
     }
-
-    // Candidate ships join when the expedition passes nearby.
-    let ex_pos = sea.entities[ex_idx].pos;
-    let joiners: Vec<(EntityId, Vec2)> = sea
-        .entities
-        .iter()
-        .filter(|o| {
-            o.id != ex_id
-                && o.is_active_ship()
-                && !v.followers.contains(&o.id)
-                && o.pos.distance(ex_pos) <= t.weaver_join_radius
-        })
-        .map(|o| (o.id, o.pos))
-        .collect();
-    for (id, pos) in joiners {
-        v.followers.push(id);
-        sea.events.push(Event::VoyageJoined { id, pos });
-    }
-
-    // Followers trail the expedition in a line.
-    let ex_heading = sea.entities[ex_idx].heading;
-    for (k, fid) in v.followers.clone().into_iter().enumerate() {
-        let Some(f) = sea.entity_mut(fid) else { continue };
-        if !f.is_active() {
-            continue;
-        }
-        let slot = ex_pos - dir(ex_heading) * (4.0 * (k as f32 + 1.0));
-        let to = slot - f.pos;
-        if to.length() > 0.5 {
-            f.heading = turn_toward(f.heading, bearing_of(to), 120f32.to_radians() * dt);
-            let step = (t.weaver_voyage_speed * 1.15 * dt).min(to.length());
-            f.pos += dir(f.heading) * step;
-        }
-    }
-
-    // Creatures follow vessel lights and sink what they touch.
-    let creature_ids: Vec<EntityId> = sea
-        .entities
-        .iter()
-        .filter(|e| e.is_active() && e.form == Form::Creature)
-        .map(|e| e.id)
-        .collect();
-    for cid in creature_ids {
-        let lights: Vec<steering::Light> = sea
-            .entities
-            .iter()
-            .filter(|s| s.is_active() && s.lantern)
-            .map(|s| steering::Light {
-                pos: s.pos,
-                brightness: t.lantern_brightness,
-                lantern: Some(s.id),
-            })
-            .collect();
-        let land = sea.land_for(cid);
-        let Some(idx) = sea.entities.iter().position(|e| e.id == cid) else { continue };
-        let creature = &mut sea.entities[idx];
-        steering::steer_creature(
-            creature,
-            &lights,
-            &land,
-            &t,
-            t.weaver_creature_speed,
-            t.weaver_creature_detect_radius,
-            dt,
-        );
-        let reach = Circle::new(creature.pos, t.creature_contact_radius);
-        let creature_pos = creature.pos;
-        let victims: Vec<EntityId> = sea
-            .entities
-            .iter()
-            .filter(|s| s.is_active_ship() && reach.overlaps(&s.circle()))
-            .map(|s| s.id)
-            .collect();
-        for vid in victims {
-            if let Some(s) = sea.entity_mut(vid) {
-                s.status = Status::Sunk;
-                let pos = s.pos;
-                sea.events.push(Event::Sunk { id: vid, pos, cause: Cause::Creature });
-            }
-            if vid == ex_id {
-                v.failure = Some(format!("The {} creature took the expedition.", compass_word(creature_pos)));
-                return true;
-            }
-        }
+    if pb.elapsed > t.world_weaver_playback_limit * 2.0 {
+        pb.failure = Some("The ship never reached harbor.".into());
     }
     false
 }
 
-pub fn outcome(ww: &WorldWeaver, sea: &Sea) -> Outcome {
-    let v = &ww.voyage;
-    let bonus = v
-        .followers
-        .iter()
-        .filter(|id| sea.entity(**id).is_some_and(|e| e.status == Status::Secured))
-        .count();
-    let rescued = if v.arrived { 1 + bonus } else { 0 };
-    let captured = ww.committed.iter().filter(|c| c.is_some()).count();
-    let mut details = vec![format!("{captured} of {} sectors captured; the rest used {}.", ww.committed.len(), LAYER_NAMES[sea.tuning.weaver_default_layer as usize])];
+pub fn outcome(ww: &WorldWeaver, _sea: &Sea) -> Outcome {
+    let pb = &ww.playback;
+    let edited = ww.edited.iter().filter(|e| **e).count();
+    let mut details = vec![format!("{edited} of {} sectors copied into World 1.", ww.edited.len())];
     if let Some(built) = &ww.built {
-        let summary: Vec<String> = ww
-            .anchors
+        let summary: Vec<String> = built
             .iter()
-            .map(|a| format!("{} ({}): {}", a.name, LAYER_GLYPHS[built[a.sector] as usize], a.form_in(built[a.sector]).name()))
+            .enumerate()
+            .filter(|(s, _)| ww.edited[*s])
+            .map(|(s, p)| {
+                let mut parts = Vec::new();
+                if p.outer_gap {
+                    parts.push("outer gap");
+                }
+                if p.inner_gap {
+                    parts.push("inner gap");
+                }
+                if p.wall {
+                    parts.push("wall");
+                }
+                if parts.is_empty() {
+                    parts.push("reefs");
+                }
+                format!("sector {}: {}", s + 1, parts.join(", "))
+            })
             .collect();
-        details.push(summary.join(", "));
+        if !summary.is_empty() {
+            details.push(summary.join("; "));
+        }
     }
-    let headline = match (&v.failure, v.arrived) {
+    if let Some(route) = &pb.route {
+        details.push(format!("Passage found: {:.0} units through the assembled sea.", route::length(route)));
+    }
+    let headline = match (&pb.failure, pb.arrived) {
         (Some(reason), _) => reason.clone(),
-        (None, true) if bonus > 0 => format!("The expedition reached harbor with {bonus} vessel{} joining it.", if bonus == 1 { "" } else { "s" }),
-        (None, true) => "The expedition reached harbor alone.".into(),
+        (None, true) => "The ship found its way through your sea to the harbor.".into(),
         (None, false) => "The voyage did not resolve.".into(),
     };
     Outcome {
-        success: v.arrived,
+        success: pb.arrived,
         headline,
         details,
-        rescued,
-        total: 1 + ww.anchors.len(),
+        rescued: pb.arrived as usize,
+        total: 1,
     }
 }

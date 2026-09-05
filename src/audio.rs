@@ -151,9 +151,9 @@ pub fn play_event(commands: &mut Commands, sounds: &Sounds, event: &SimEvent) {
         SimEvent::LayerChanged { .. } => sounds.play(commands, Cue::LayerTick, None, 0.3),
         SimEvent::Captured { .. } => sounds.play(commands, Cue::Capture, None, 0.55),
         SimEvent::VoyageBegins => {}
-        SimEvent::VoyageDelay { pos } => sounds.play(commands, Cue::Splash, at(pos), 0.3),
-        SimEvent::VoyageBlocked { pos } => sounds.play(commands, Cue::Blocked, at(pos), 0.7),
-        SimEvent::VoyageJoined { pos, .. } => sounds.play(commands, Cue::VoyageJoin, at(pos), 0.7),
+        SimEvent::AssembledWorld => sounds.play(commands, Cue::LayerTick, None, 0.3),
+        SimEvent::NoPassage => sounds.play(commands, Cue::Blocked, None, 0.7),
+        SimEvent::ShipCrossed { .. } => sounds.play(commands, Cue::VoyageJoin, None, 0.6),
         SimEvent::VoyageArrived => sounds.play(commands, Cue::Rescue, None, 0.8),
         SimEvent::SessionEnded => {}
     }

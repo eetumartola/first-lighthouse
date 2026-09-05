@@ -5,6 +5,7 @@
 use super::beam::Input;
 use super::entity::{Entity, EntityId};
 use super::geom::{angle_delta, bearing_of, dir};
+use super::islands::polar;
 use super::{Mode, Phase, Rules, World};
 use glam::Vec2;
 use std::collections::HashMap;
@@ -12,13 +13,15 @@ use std::f32::consts::TAU;
 
 #[derive(Debug)]
 pub struct Keeper {
-    /// Per-vessel route points from the approach to the harbor.
+    /// Per-vessel route points from the approach to the harbor (Night Watch, Mutable Sea).
     pub routes: HashMap<&'static str, Vec<Vec2>>,
+    /// Spiral Voyage: route points per world.
+    pub world_routes: Vec<Vec<Vec2>>,
     /// Charge the keeper considers "painted enough" before moving on.
     pub target_charge: f32,
     /// Ship currently being tended; switching costs attention, so it needs a clear reason.
     focus: Option<EntityId>,
-    /// World Weaver plan: (sector, layer) captures in order.
+    /// World Weaver plan: (sector, world) copies in order.
     pub plan: Vec<(usize, u8)>,
     plan_index: usize,
 }
@@ -27,18 +30,31 @@ fn pts(list: &[(f32, f32)]) -> Vec<Vec2> {
     list.iter().map(|&(x, y)| Vec2::new(x, y)).collect()
 }
 
+fn polar_pts(list: &[(f32, f32)]) -> Vec<Vec2> {
+    list.iter().map(|&(b, r)| polar(b, r)).collect()
+}
+
 impl Keeper {
     pub fn for_mode(mode: Mode) -> Self {
         match mode {
             Mode::NightWatch => Self::new(night_watch_routes(), 12.0),
             Mode::MutableSea => Self::new(mutable_sea_routes(), 12.0),
             Mode::WorldWeaver => Self::weaver(world_weaver_solution()),
+            Mode::SpiralVoyage => Self {
+                routes: HashMap::new(),
+                world_routes: spiral_routes(),
+                target_charge: 12.0,
+                focus: None,
+                plan: Vec::new(),
+                plan_index: 0,
+            },
         }
     }
 
     pub fn new(routes: HashMap<&'static str, Vec<Vec2>>, target_charge: f32) -> Self {
         Self {
             routes,
+            world_routes: Vec::new(),
             target_charge,
             focus: None,
             plan: Vec::new(),
@@ -49,6 +65,7 @@ impl Keeper {
     pub fn weaver(plan: Vec<(usize, u8)>) -> Self {
         Self {
             routes: HashMap::new(),
+            world_routes: Vec::new(),
             target_charge: 0.0,
             focus: None,
             plan,
@@ -57,8 +74,8 @@ impl Keeper {
     }
 
     /// Route point a ship can actually see and that still needs light.
-    fn next_point(&self, w: &World, ship: &Entity) -> Option<Vec2> {
-        let route = self.routes.get(ship.name)?;
+    fn next_point(&self, w: &World, ship: &Entity, route: &[Vec2], charge_at: &dyn Fn(Vec2) -> f32) -> Option<Vec2> {
+        let _ = w;
         let fwd = dir(ship.heading);
         let visible = |p: &Vec2| {
             let to = *p - ship.pos;
@@ -82,7 +99,7 @@ impl Keeper {
             })?;
         route[start..]
             .iter()
-            .find(|p| w.sea.charge.charge_at(**p) < self.target_charge)
+            .find(|p| charge_at(**p) < self.target_charge)
             .or_else(|| route[start..].first())
             .copied()
     }
@@ -93,7 +110,9 @@ impl Keeper {
         let t = &sea.tuning;
         let mut best: Option<(f32, EntityId, Vec2)> = None;
         for ship in sea.entities.iter().filter(|e| e.is_active_ship()) {
-            let Some(point) = self.next_point(w, ship) else { continue };
+            let Some(route) = self.routes.get(ship.name) else { continue };
+            let charge_at = |p: Vec2| sea.charge.charge_at(p);
+            let Some(point) = self.next_point(w, ship, route, &charge_at) else { continue };
             let dist = point.distance(ship.pos);
             let to_harbor = ship.pos.distance(t.harbor_center);
             let mut urgency = 1.0 / (1.0 + dist / 10.0) + 0.6 / (1.0 + to_harbor / 20.0);
@@ -113,6 +132,12 @@ impl Keeper {
 
     pub fn input(&mut self, w: &World) -> Input {
         if w.phase != Phase::Night {
+            // Dusk: aim at the first thing worth painting so the night starts on target.
+            if let Phase::Intro { .. } = w.phase {
+                if let Some(aim) = self.aim_point(w) {
+                    return aim_at(w, aim);
+                }
+            }
             return Input::default();
         }
         match &w.rules {
@@ -134,6 +159,32 @@ impl Keeper {
                 Input {
                     rotate: d.signum(),
                     ..Default::default()
+                }
+            }
+            Rules::SpiralVoyage(sv) => {
+                let n = sv.worlds.len();
+                let Some(ship) = sv.ship.and_then(|id| w.sea.entity(id)) else { return Input::default() };
+                // One route through all worlds, ordered by absolute winding, so the point after
+                // a seam is painted in the next world *before* the ship gets there.
+                let flat = self
+                    .world_routes
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(k, r)| r.iter().map(move |p| (k as f32 * TAU + bearing_of(*p), *p, k)));
+                let ahead: Vec<(f32, Vec2, usize)> = flat.filter(|(wind, _, _)| *wind > ship.winding - 0.05).collect();
+                let Some(&(target_winding, point, _)) = ahead
+                    .iter()
+                    .find(|(_, p, k)| *k < n && sv.worlds[*k].charge.charge_at(*p) < self.target_charge)
+                    .or_else(|| ahead.first())
+                else {
+                    return Input::default();
+                };
+                let d = target_winding - w.sea.beam.winding;
+                let d_range = point.length() - w.sea.beam.range;
+                Input {
+                    rotate: if d.abs() > 0.02 { d.signum() } else { 0.0 },
+                    range: if d_range.abs() > 1.0 { d_range.signum() } else { 0.0 },
+                    capture: false,
                 }
             }
             _ => {
@@ -158,11 +209,11 @@ pub fn aim_at(w: &World, aim: Vec2) -> Input {
 
 pub fn night_watch_routes() -> HashMap<&'static str, Vec<Vec2>> {
     HashMap::from([
-        ("Alder", pts(&[(0.0, 85.0), (-6.0, 72.0), (-14.0, 58.0), (-18.0, 44.0), (-20.0, 30.0), (-20.0, 16.0), (-18.0, 2.0), (-14.0, -10.0), (-6.0, -16.0), (0.0, -15.0)])),
-        ("Brant", pts(&[(85.0, 8.0), (72.0, 6.0), (60.0, 2.0), (48.0, -4.0), (36.0, -10.0), (24.0, -14.0), (14.0, -16.0), (6.0, -15.0), (2.0, -14.0)])),
+        ("Alder", pts(&[(0.0, 85.0), (-10.0, 70.0), (-24.0, 56.0), (-30.0, 40.0), (-30.0, 24.0), (-26.0, 8.0), (-22.0, -8.0), (-14.0, -18.0), (-4.0, -22.0), (0.0, -16.0)])),
+        ("Brant", pts(&[(85.0, 8.0), (72.0, 0.0), (60.0, -8.0), (46.0, -12.0), (32.0, -14.0), (18.0, -16.0), (6.0, -16.0), (0.0, -15.0)])),
         ("Cormorant", pts(&[(-58.0, -56.0), (-46.0, -46.0), (-36.0, -36.0), (-26.0, -28.0), (-16.0, -22.0), (-8.0, -17.0), (-2.0, -14.0)])),
-        ("Dunlin", pts(&[(56.0, 58.0), (46.0, 48.0), (36.0, 38.0), (30.0, 26.0), (26.0, 14.0), (22.0, 2.0), (20.0, -10.0), (14.0, -16.0), (6.0, -15.0), (2.0, -14.0)])),
-        ("Eider", pts(&[(66.0, -50.0), (54.0, -44.0), (44.0, -38.0), (34.0, -32.0), (26.0, -26.0), (18.0, -20.0), (10.0, -16.0), (4.0, -14.0)])),
+        ("Dunlin", pts(&[(56.0, 58.0), (46.0, 48.0), (38.0, 36.0), (30.0, 26.0), (26.0, 14.0), (22.0, 2.0), (20.0, -10.0), (14.0, -16.0), (6.0, -15.0), (2.0, -14.0)])),
+        ("Eider", pts(&[(66.0, -50.0), (54.0, -46.0), (44.0, -40.0), (36.0, -32.0), (28.0, -24.0), (18.0, -20.0), (10.0, -16.0), (4.0, -14.0)])),
     ])
 }
 
@@ -174,7 +225,34 @@ pub fn mutable_sea_routes() -> HashMap<&'static str, Vec<Vec2>> {
     ])
 }
 
-/// One validated World Weaver composition: ships to join, an island barrier, one wreck delay.
+/// One validated World Weaver assembly: open the east with sector 3 from World 2.
 pub fn world_weaver_solution() -> Vec<(usize, u8)> {
-    vec![(1, 1), (2, 3), (3, 1), (4, 1), (5, 3), (6, 1)]
+    vec![(3, 1)]
+}
+
+/// A second validated assembly: open the west with sector 10 from World 3.
+#[cfg(test)]
+pub fn world_weaver_alternative() -> Vec<(usize, u8)> {
+    vec![(10, 2)]
+}
+
+/// Spiral Voyage route points per world (compass degrees, radius).
+pub fn spiral_routes() -> Vec<Vec<Vec2>> {
+    vec![
+        polar_pts(&[(315.0, 40.0), (330.0, 40.0), (345.0, 40.0), (358.0, 40.0)]),
+        polar_pts(&[
+            (10.0, 40.0), (25.0, 48.0), (45.0, 50.0), (65.0, 50.0), (85.0, 46.0), (110.0, 40.0), (135.0, 34.0),
+            (160.0, 30.0), (185.0, 32.0), (215.0, 42.0), (240.0, 44.0), (265.0, 40.0), (290.0, 38.0),
+            (315.0, 36.0), (340.0, 36.0), (358.0, 36.0),
+        ]),
+        polar_pts(&[
+            (15.0, 40.0), (40.0, 45.0), (70.0, 45.0), (100.0, 42.0), (130.0, 42.0), (160.0, 38.0), (190.0, 32.0),
+            (215.0, 26.0), (240.0, 24.0), (265.0, 30.0), (290.0, 34.0), (310.0, 34.0), (335.0, 36.0), (358.0, 38.0),
+        ]),
+        {
+            let mut r = polar_pts(&[(15.0, 36.0), (40.0, 42.0), (65.0, 42.0), (90.0, 40.0), (110.0, 34.0), (135.0, 30.0), (160.0, 24.0), (178.0, 18.0)]);
+            r.push(Vec2::new(0.0, -16.0));
+            r
+        },
+    ]
 }

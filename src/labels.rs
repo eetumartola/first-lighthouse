@@ -4,13 +4,13 @@
 use crate::app::{to_world_h, Session};
 use crate::scene::MainCamera;
 use crate::sim::{self, mutable_sea, Form, Phase, Rules, Visibility as SimVis};
+
 use bevy::prelude::*;
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum LabelKey {
     Entity(sim::EntityId),
-    Anchor(&'static str),
 }
 
 #[derive(Component)]
@@ -55,24 +55,11 @@ fn update_labels(
             let show = match world.entity_visibility(e) {
                 SimVis::Lit => e.is_active() || e.status == sim::Status::Secured,
                 // Surfaced creatures are named too; afterglow silhouettes stay anonymous.
-                SimVis::Silhouette => e.form == Form::Creature && world.sea.time < e.surfaced_until,
+                SimVis::Silhouette(_) => e.form == Form::Creature && world.sea.time < e.surfaced_until,
                 SimVis::Hidden => false,
             };
             if show && world.phase != Phase::Finished {
                 wanted.push((LabelKey::Entity(e.id), to_world_h(e.pos, 4.5), label_text(world, e)));
-            }
-        }
-        if let Rules::WorldWeaver(ww) = &world.rules {
-            if world.phase == Phase::Night {
-                let sector = world.sea.beam.sector_index(world.tuning());
-                let layer = ww.layer_for(&world.sea);
-                for (anchor, form) in ww.preview(sector, layer) {
-                    wanted.push((
-                        LabelKey::Anchor(anchor.name),
-                        to_world_h(anchor.pos, 4.5),
-                        format!("{}  {}", anchor.name, form.name()),
-                    ));
-                }
             }
         }
     }

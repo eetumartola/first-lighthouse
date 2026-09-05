@@ -8,9 +8,11 @@ pub mod beam;
 pub mod charge;
 pub mod entity;
 pub mod geom;
-pub mod guidance;
+pub mod islands;
 pub mod mutable_sea;
 pub mod night_watch;
+pub mod route;
+pub mod spiral_voyage;
 pub mod steering;
 pub mod tuning;
 pub mod world_weaver;
@@ -22,7 +24,6 @@ pub use beam::{Beam, Footprint, FootprintKind, Input};
 pub use charge::ChargeField;
 pub use entity::{Entity, EntityId, Form, Status};
 pub use geom::Circle;
-pub use guidance::Guidance;
 pub use tuning::Tuning;
 
 use glam::Vec2;
@@ -31,18 +32,25 @@ use glam::Vec2;
 pub enum Mode {
     #[default]
     NightWatch,
+    /// Suspended: kept for its retained implementation, hidden from the menu.
     MutableSea,
     WorldWeaver,
+    SpiralVoyage,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 3] = [Mode::NightWatch, Mode::MutableSea, Mode::WorldWeaver];
+    /// Every mode, including the suspended one (tests).
+    #[cfg(test)]
+    pub const ALL: [Mode; 4] = [Mode::NightWatch, Mode::MutableSea, Mode::WorldWeaver, Mode::SpiralVoyage];
+    /// What the player can choose.
+    pub const MENU: [Mode; 3] = [Mode::NightWatch, Mode::WorldWeaver, Mode::SpiralVoyage];
 
     pub fn title(self) -> &'static str {
         match self {
             Mode::NightWatch => "Night Watch",
             Mode::MutableSea => "Mutable Sea",
             Mode::WorldWeaver => "World Weaver",
+            Mode::SpiralVoyage => "Spiral Voyage",
         }
     }
 
@@ -50,7 +58,8 @@ impl Mode {
         match self {
             Mode::NightWatch => "Paint safe passage. Remember what moves in the dark.",
             Mode::MutableSea => "What you abandon to darkness may become something else.",
-            Mode::WorldWeaver => "Build the sea by night. Test it at first light.",
+            Mode::WorldWeaver => "Assemble the sea by night. Find the passage at first light.",
+            Mode::SpiralVoyage => "One ship, four worlds. Scout ahead, then bring it through.",
         }
     }
 
@@ -59,7 +68,7 @@ impl Mode {
         match self {
             Mode::NightWatch => {
                 "Ships follow the glowing water you paint ahead of them and keep their heading when the trail fades. \
-                 Guide them into the southern harbor before dawn; a creature follows the brightest light it can see."
+                 Guide them into the southern harbor before dawn; a ship-sized predator eats the glow it finds and sinks what it touches."
             }
             Mode::MutableSea => {
                 "Ships follow the glowing water you paint ahead of them, and only your light keeps a thing what it is: \
@@ -67,8 +76,13 @@ impl Mode {
                  Bring two of them into the southern harbor as ships before dawn."
             }
             Mode::WorldWeaver => {
-                "Each turn of the beam shows another layer of the sea; press Space to capture the lit sector into the world you are building. \
-                 Uncaptured sectors use the calm first layer. At dawn the expedition sails the buoy lane through what you made."
+                "World 1 is the sea the ship will sail; winding the beam onward shows Worlds 2 to 4, and Space copies the lit \
+                 sector's land into World 1. At dawn a ship enters from the marked lane and must find any passage to the harbor."
+            }
+            Mode::SpiralVoyage => {
+                "Paint glowing water ahead of your ship exactly as in Night Watch; a full clockwise circuit of the beam \
+                 winds into the next world, and the ship crosses the same seam by sailing over it. \
+                 Bring it through Worlds 1 to 4 to the harbor in World 4."
             }
         }
     }
@@ -78,21 +92,23 @@ impl Mode {
         match self {
             Mode::NightWatch => "Paint glowing routes ahead of ships and bring them to the southern harbor.",
             Mode::MutableSea => "Your light holds a form still; darkness changes it. Bring 2 of 3 home as ships.",
-            Mode::WorldWeaver => "Space captures the lit sector's layer. At dawn the expedition sails your world.",
+            Mode::WorldWeaver => "Copy sectors from Worlds 2 to 4 into World 1 until the lane connects to the harbor.",
+            Mode::SpiralVoyage => "Guide the ship across the north seam through all four worlds to the harbor in World 4.",
         }
     }
 
     pub fn controls(self) -> &'static str {
         match self {
-            Mode::NightWatch | Mode::MutableSea => "A / D rotate beam    W / S move the patch farther / nearer    Esc pause",
-            Mode::WorldWeaver => "A / D wind backward / forward    Space capture lit sector    Esc pause",
+            Mode::NightWatch | Mode::MutableSea => "A / D turn spotlight    W / S move the patch farther / nearer    Esc pause",
+            Mode::WorldWeaver => "A / D wind backward / forward    Space copy lit sector into World 1    Esc pause",
+            Mode::SpiralVoyage => "A / D turn spotlight and wind through worlds    W / S move the patch farther / nearer    Esc pause",
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Phase {
-    /// Beacon ignition; no input yet.
+    /// Dusk: the sea is visible and fades to darkness; the player may aim but nothing moves yet.
     Intro { elapsed: f32 },
     Night,
     /// Sunrise transition; the sea is revealed and rules stop.
@@ -122,13 +138,18 @@ pub enum Event {
     Transformed { id: EntityId, pos: Vec2, from: Form, to: Form },
     Bell { pos: Vec2 },
     CreatureCall { pos: Vec2 },
+    /// The inspected world changed (World Weaver browsing, Spiral Voyage beam winding).
     LayerChanged { layer: u8 },
+    /// World Weaver: a sector's land was copied into World 1 from `layer`.
     Captured { sector: usize, layer: u8 },
+    /// World Weaver: Space pressed while inspecting the assembled world itself.
+    AssembledWorld,
     VoyageBegins,
-    VoyageDelay { pos: Vec2 },
-    VoyageBlocked { pos: Vec2 },
-    VoyageJoined { id: EntityId, pos: Vec2 },
+    /// World Weaver: no passage exists from the lane to the harbor.
+    NoPassage,
     VoyageArrived,
+    /// Spiral Voyage: the ship crossed the seam into `world` (0-based).
+    ShipCrossed { world: u8 },
     SessionEnded,
 }
 
@@ -142,13 +163,19 @@ pub struct Outcome {
 }
 
 /// How much the presentation may show of a position right now.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Visibility {
     Hidden,
-    /// Strong afterglow: rough silhouette only.
-    Silhouette,
-    /// Direct illumination (or the whole sea after dawn).
+    /// Readable as an opaque dark shape against surrounding glow; 0 = barely, 1 = clear outline.
+    Silhouette(f32),
+    /// Direct illumination (or the whole sea at dusk and after dawn).
     Lit,
+}
+
+impl Visibility {
+    pub fn is_visible(self) -> bool {
+        !matches!(self, Visibility::Hidden)
+    }
 }
 
 /// Shared foundation used by every variant.
@@ -158,7 +185,6 @@ pub struct Sea {
     pub time: f32,
     pub beam: Beam,
     pub charge: ChargeField,
-    pub guidance: Guidance,
     /// Fixed obstacles including the central island (always index 0).
     pub rocks: Vec<Circle>,
     pub entities: Vec<Entity>,
@@ -173,7 +199,6 @@ impl Sea {
         Self {
             beam: Beam::new(kind, &tuning),
             charge: ChargeField::new(&tuning, &land),
-            guidance: Guidance::default(),
             rocks: land,
             entities: Vec::new(),
             events: Vec::new(),
@@ -235,12 +260,12 @@ impl Sea {
         e.brain = Default::default();
     }
 
-    /// Advance a ship's movement and resolve harbor entry and groundings.
+    /// Advance a ship by reading the light around it, then resolve harbor entry and groundings.
     /// Returns `Some(cause)` if the ship struck land or a solid entity this step.
     pub fn move_ship(&mut self, idx: usize, dt: f32) -> Option<Cause> {
-        let (guidance, charge, tuning, time) = (&self.guidance, &self.charge, &self.tuning, self.time);
+        let (charge, tuning) = (&self.charge, &self.tuning);
         let e = &mut self.entities[idx];
-        steering::steer_ship(e, guidance, charge, tuning, time, dt);
+        steering::steer_ship(e, charge, tuning, dt);
         let pos = e.pos;
         let radius = e.radius;
         let id = e.id;
@@ -249,10 +274,12 @@ impl Sea {
             self.events.push(Event::Rescued { id, pos });
             return None;
         }
-        let hit_rock = self.rocks.iter().any(|r| r.overlaps(&Circle::new(pos, radius)));
-        let hit_solid = self.entities.iter().any(|o| {
-            o.id != id && o.is_active() && o.form.is_solid() && o.circle().overlaps(&Circle::new(pos, radius))
-        });
+        let hull = Circle::new(pos, radius);
+        let hit_rock = self.rocks.iter().any(|r| r.overlaps(&hull));
+        let hit_solid = self
+            .entities
+            .iter()
+            .any(|o| o.id != id && o.is_active() && o.form.is_solid() && o.circle().overlaps(&hull));
         (hit_rock || hit_solid).then_some(Cause::Rock)
     }
 
@@ -291,6 +318,7 @@ pub enum Rules {
     NightWatch(night_watch::NightWatch),
     MutableSea(mutable_sea::MutableSea),
     WorldWeaver(world_weaver::WorldWeaver),
+    SpiralVoyage(spiral_voyage::SpiralVoyage),
 }
 
 #[derive(Clone, Debug)]
@@ -299,7 +327,8 @@ pub struct World {
     pub phase: Phase,
     pub sea: Sea,
     pub rules: Rules,
-    pub night_length: f32,
+    /// `None`: no deadline (Spiral Voyage ends when the ship arrives or is lost).
+    pub night_length: Option<f32>,
     pub night_elapsed: f32,
     pub outcome: Option<Outcome>,
 }
@@ -308,22 +337,30 @@ impl World {
     pub fn new(mode: Mode, tuning: Tuning) -> Self {
         let (rules, sea, night_length) = match mode {
             Mode::NightWatch => {
-                let (rules, rocks) = night_watch::NightWatch::scenario();
-                let sea = Sea::new(tuning.clone(), FootprintKind::Spot, rocks);
-                (Rules::NightWatch(rules), sea, tuning.night_watch_night)
+                let (mut rules, rocks) = night_watch::NightWatch::scenario(&tuning);
+                let mut sea = Sea::new(tuning.clone(), FootprintKind::Spot, rocks);
+                // The first boats are present before the dusk fade so they can be seen.
+                night_watch::dusk_boats(&mut rules, &mut sea);
+                (Rules::NightWatch(rules), sea, Some(tuning.night_watch_night))
             }
             Mode::MutableSea => {
                 let (rules, rocks) = mutable_sea::MutableSea::scenario();
                 let mut sea = Sea::new(tuning.clone(), FootprintKind::Spot, rocks);
                 mutable_sea::populate(&rules, &mut sea);
-                (Rules::MutableSea(rules), sea, tuning.mutable_sea_night)
+                (Rules::MutableSea(rules), sea, Some(tuning.mutable_sea_night))
             }
             Mode::WorldWeaver => {
-                let (rules, rocks) = world_weaver::WorldWeaver::scenario(&tuning);
-                let mut sea = Sea::new(tuning.clone(), FootprintKind::Sector, rocks);
-                // Start in the middle of sector 0 so a twitch at the seam cannot flip layers.
+                let rules = world_weaver::WorldWeaver::scenario(&tuning);
+                let mut sea = Sea::new(tuning.clone(), FootprintKind::Sector, Vec::new());
+                // Start in the middle of sector 0 so a twitch at the seam cannot flip worlds.
                 sea.beam.winding = tuning.sector_angle() * 0.5;
-                (Rules::WorldWeaver(rules), sea, tuning.world_weaver_night)
+                (Rules::WorldWeaver(rules), sea, Some(tuning.world_weaver_night))
+            }
+            Mode::SpiralVoyage => {
+                let mut rules = spiral_voyage::SpiralVoyage::scenario(&tuning);
+                let mut sea = Sea::new(tuning.clone(), FootprintKind::Spot, Vec::new());
+                spiral_voyage::populate(&mut rules, &mut sea);
+                (Rules::SpiralVoyage(rules), sea, None)
             }
         };
         let mut world = Self {
@@ -343,14 +380,16 @@ impl World {
         &self.sea.tuning
     }
 
-    pub fn night_remaining(&self) -> f32 {
-        (self.night_length - self.night_elapsed).max(0.0)
+    pub fn night_remaining(&self) -> Option<f32> {
+        self.night_length.map(|len| (len - self.night_elapsed).max(0.0))
     }
 
-    /// Developer shortcut: end the night on the next step.
+    /// Developer shortcut: end the night on the next step (modes with a deadline).
     pub fn skip_to_dawn(&mut self) {
         if self.phase == Phase::Night {
-            self.night_elapsed = self.night_length;
+            if let Some(len) = self.night_length {
+                self.night_elapsed = len;
+            }
         }
     }
 
@@ -358,15 +397,50 @@ impl World {
         self.sea.beam.footprint(&self.sea.tuning)
     }
 
-    /// Whether the beam is currently lighting the water (not during intro/dawn/playback).
+    /// Whether the beam is currently lighting the water (aiming during dusk counts).
     pub fn beam_active(&self) -> bool {
-        matches!(self.phase, Phase::Night)
+        matches!(self.phase, Phase::Night | Phase::Intro { .. })
+    }
+
+    /// Dusk light level: 1 at the start of the introduction, 0 once the night begins.
+    pub fn dusk(&self) -> f32 {
+        match self.phase {
+            Phase::Intro { elapsed } => (1.0 - elapsed / self.sea.tuning.intro_seconds).clamp(0.0, 1.0),
+            _ => 0.0,
+        }
+    }
+
+    /// Index of the world the beam currently inspects (0 outside the layered modes).
+    pub fn inspected_world(&self) -> usize {
+        match &self.rules {
+            Rules::WorldWeaver(ww) => ww.layer_for(&self.sea) as usize,
+            Rules::SpiralVoyage(sv) => sv.beam_world(&self.sea),
+            _ => 0,
+        }
+    }
+
+    /// The charge field the presentation should draw: the inspected world's.
+    pub fn view_charge(&self) -> &ChargeField {
+        match &self.rules {
+            Rules::SpiralVoyage(sv) => &sv.worlds[self.inspected_world()].charge,
+            _ => &self.sea.charge,
+        }
+    }
+
+    /// World index an entity currently occupies.
+    pub fn entity_world(&self, e: &Entity) -> usize {
+        match &self.rules {
+            Rules::SpiralVoyage(_) => spiral_voyage::world_of(e.winding, self.sea.tuning.spiral_worlds),
+            _ => 0,
+        }
     }
 
     pub fn step(&mut self, input: Input, dt: f32) {
         self.sea.time += dt;
         match self.phase {
             Phase::Intro { elapsed } => {
+                // Dusk: aim freely; nothing moves and no charge accumulates until dark.
+                self.sea.beam.update(input, &self.sea.tuning, dt);
                 let elapsed = elapsed + dt;
                 if elapsed >= self.sea.tuning.intro_seconds {
                     self.phase = Phase::Night;
@@ -380,30 +454,31 @@ impl World {
                 let fp = self.footprint();
                 match &mut self.rules {
                     Rules::WorldWeaver(ww) => {
-                        // Weaver: glowing water only records captures and persists until dawn.
-                        world_weaver::step_night(ww, &mut self.sea, input, dt);
+                        // Weaver: glowing water only records copies and persists until dawn.
+                        world_weaver::step_night(ww, &mut self.sea, input);
                     }
                     Rules::NightWatch(nw) => {
                         self.sea.charge.step(Some(&fp), &self.sea.tuning, dt);
-                        self.sea
-                            .guidance
-                            .paint(fp.center(), &self.sea.charge, &self.sea.tuning);
-                        self.sea.guidance.prune(&self.sea.charge);
                         night_watch::step(nw, &mut self.sea, dt);
                         self.sea.emit_ambient_cues(dt);
                     }
                     Rules::MutableSea(ms) => {
                         self.sea.charge.step(Some(&fp), &self.sea.tuning, dt);
-                        self.sea
-                            .guidance
-                            .paint(fp.center(), &self.sea.charge, &self.sea.tuning);
-                        self.sea.guidance.prune(&self.sea.charge);
                         mutable_sea::step(ms, &mut self.sea, dt);
+                        self.sea.emit_ambient_cues(dt);
+                    }
+                    Rules::SpiralVoyage(sv) => {
+                        if spiral_voyage::step(sv, &mut self.sea, &fp, dt) {
+                            self.sea.emit_ambient_cues(dt);
+                            self.phase = Phase::Dawn { elapsed: 0.0 };
+                            self.sea.events.push(Event::Dawn);
+                            return;
+                        }
                         self.sea.emit_ambient_cues(dt);
                     }
                 }
                 self.night_elapsed += dt;
-                if self.night_elapsed >= self.night_length {
+                if self.night_length.is_some_and(|len| self.night_elapsed >= len) {
                     self.phase = Phase::Dawn { elapsed: 0.0 };
                     self.sea.events.push(Event::Dawn);
                     if let Rules::WorldWeaver(ww) = &mut self.rules {
@@ -444,6 +519,7 @@ impl World {
             Rules::NightWatch(nw) => night_watch::outcome(nw, &self.sea),
             Rules::MutableSea(ms) => mutable_sea::outcome(ms, &self.sea),
             Rules::WorldWeaver(ww) => world_weaver::outcome(ww, &self.sea),
+            Rules::SpiralVoyage(sv) => spiral_voyage::outcome(sv, &self.sea),
         });
         self.sea.events.push(Event::SessionEnded);
     }
@@ -452,45 +528,48 @@ impl World {
         std::mem::take(&mut self.sea.events)
     }
 
-    /// How strongly the first light floods the whole sea during ignition: 0 before the flame
-    /// catches, 1 while it flares, falling back to 0 as the night begins.
-    pub fn flare(&self) -> f32 {
-        let Phase::Intro { elapsed } = self.phase else { return 0.0 };
-        let t = elapsed / self.sea.tuning.intro_seconds;
-        let rise = ((t - 0.25) / 0.15).clamp(0.0, 1.0);
-        let fall = ((1.0 - t) / 0.2).clamp(0.0, 1.0);
-        rise.min(fall)
+    /// Silhouette strength for a shape of `radius` at `pos`, from the glow touching it.
+    fn silhouette(&self, field: &ChargeField, pos: Vec2, radius: f32) -> Visibility {
+        let t = &self.sea.tuning;
+        let glow = field.glow_around(pos, radius);
+        if glow < t.silhouette_min_glow {
+            Visibility::Hidden
+        } else {
+            let k = ((glow - t.silhouette_min_glow) / (t.strong_threshold - t.silhouette_min_glow)).clamp(0.0, 1.0);
+            Visibility::Silhouette(k)
+        }
     }
 
-    /// Visibility of a world position under the mode's rules. Rendering must not show more.
-    pub fn visibility(&self, pos: Vec2) -> Visibility {
+    /// Visibility of a shape in the inspected world under the mode's rules. Rendering must not
+    /// show more than this.
+    pub fn visibility(&self, pos: Vec2, radius: f32) -> Visibility {
         match self.phase {
             Phase::Dawn { .. } | Phase::Playback | Phase::Finished => Visibility::Lit,
-            // The first light floods the whole sea once, then darkness falls.
-            Phase::Intro { .. } if self.flare() > 0.0 => Visibility::Lit,
-            Phase::Intro { .. } => Visibility::Hidden,
+            // Dusk: the whole sea is still visible while the light fades.
+            Phase::Intro { .. } => Visibility::Lit,
             Phase::Night => {
                 if self.footprint().contains(pos) {
                     Visibility::Lit
-                } else if self.sea.charge.is_strong(pos, &self.sea.tuning) {
-                    Visibility::Silhouette
                 } else {
-                    Visibility::Hidden
+                    self.silhouette(self.view_charge(), pos, radius)
                 }
             }
         }
     }
 
-    /// Secured (moored) ships are always visible: the cumulative record of success. A creature
-    /// that has just called shows at least a silhouette while it is surfaced.
+    /// Entity visibility: moored ships are always visible; entities in a world other than the
+    /// inspected one are hidden; a creature that has just called shows at least a faint outline.
     pub fn entity_visibility(&self, e: &Entity) -> Visibility {
         match e.status {
             Status::Secured => Visibility::Lit,
             Status::Sunk => Visibility::Hidden,
             Status::Active => {
-                let vis = self.visibility(e.pos);
+                if self.phase == Phase::Night && self.entity_world(e) != self.inspected_world() {
+                    return Visibility::Hidden;
+                }
+                let vis = self.visibility(e.pos, e.radius);
                 if vis == Visibility::Hidden && e.form == Form::Creature && self.sea.time < e.surfaced_until {
-                    Visibility::Silhouette
+                    Visibility::Silhouette(0.6)
                 } else {
                     vis
                 }

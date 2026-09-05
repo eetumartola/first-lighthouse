@@ -1,12 +1,15 @@
 //! Presentation of simulation entities: one silhouette family for ship, wreck, creature and
 //! island, shown only where the simulation's visibility rules allow.
 
-use crate::app::{to_world, to_world_h, Session};
+use crate::app::{to_world, to_world_h, Session, Settings};
 use crate::scene::SessionScoped;
-use crate::sim::{self, mutable_sea, EntityId, Form, Phase, Rules, Visibility as SimVis};
+use crate::sim::{self, mutable_sea, EntityId, Form, Visibility as SimVis};
 use bevy::prelude::*;
 use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_4;
+
+/// Silhouette clarity is quantised into this many alpha levels (one material each).
+const SILHOUETTE_LEVELS: usize = 6;
 
 #[derive(Resource)]
 pub struct FormAssets {
@@ -27,7 +30,8 @@ pub struct FormAssets {
     creature: Handle<StandardMaterial>,
     eye_glow: Handle<StandardMaterial>,
     stone: Handle<StandardMaterial>,
-    silhouette: Handle<StandardMaterial>,
+    /// Opaque dark shape at increasing clarity, indexed by glow strength.
+    silhouettes: Vec<Handle<StandardMaterial>>,
 }
 
 /// Parent of a simulation entity's visual.
@@ -35,13 +39,6 @@ pub struct FormAssets {
 pub struct Visual {
     pub id: EntityId,
 
-}
-
-/// World Weaver candidate visual for one anchor in one layer.
-#[derive(Component)]
-struct Preview {
-    anchor: &'static str,
-    form: Form,
 }
 
 #[derive(Component)]
@@ -62,7 +59,7 @@ impl Plugin for EntitiesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VisualMap>()
             .add_systems(Startup, setup_assets)
-            .add_systems(Update, (sync_visuals, apply_visibility, sync_previews).chain());
+            .add_systems(Update, (sync_visuals, apply_visibility, draw_heading_lines).chain());
     }
 }
 
@@ -119,11 +116,17 @@ fn setup_assets(
             perceptual_roughness: 0.95,
             ..default()
         }),
-        silhouette: materials.add(StandardMaterial {
-            base_color: Color::srgb(0.05, 0.07, 0.1),
-            unlit: true,
-            ..default()
-        }),
+        silhouettes: (0..SILHOUETTE_LEVELS)
+            .map(|i| {
+                let alpha = 0.35 + 0.65 * i as f32 / (SILHOUETTE_LEVELS - 1) as f32;
+                materials.add(StandardMaterial {
+                    base_color: Color::srgba(0.04, 0.06, 0.09, alpha),
+                    alpha_mode: AlphaMode::Blend,
+                    unlit: true,
+                    ..default()
+                })
+            })
+            .collect(),
     });
 }
 
@@ -189,7 +192,7 @@ fn spawn_form(commands: &mut Commands, assets: &FormAssets, form: Form, transfor
         commands.spawn((
             SilhouettePart,
             Mesh3d(mesh),
-            MeshMaterial3d(assets.silhouette.clone()),
+            MeshMaterial3d(assets.silhouettes[SILHOUETTE_LEVELS - 1].clone()),
             local,
             Visibility::Hidden,
             ChildOf(parent),
@@ -267,8 +270,9 @@ fn sync_visuals(
 
 fn apply_visibility(
     session: Res<Session>,
+    assets: Res<FormAssets>,
     mut parents: Query<(&Visual, &mut Visibility, &Children)>,
-    mut parts: Query<(&mut Visibility, Has<LitPart>, Has<SilhouettePart>), Without<Visual>>,
+    mut parts: Query<(&mut Visibility, Has<LitPart>, Option<&mut MeshMaterial3d<StandardMaterial>>, Has<SilhouettePart>), Without<Visual>>,
 ) {
     let Some(world) = session.world() else { return };
     for (visual, mut vis, children) in &mut parents {
@@ -277,14 +281,26 @@ fn apply_visibility(
             continue;
         };
         let mode_vis = world.entity_visibility(e);
-        *vis = if mode_vis == SimVis::Hidden { Visibility::Hidden } else { Visibility::Visible };
+        *vis = if mode_vis.is_visible() { Visibility::Visible } else { Visibility::Hidden };
         for child in children.iter() {
-            if let Ok((mut cv, lit, sil)) = parts.get_mut(child) {
-                // A creature's silhouette is its own dim glow (eyes, sheen); other forms are flat.
+            if let Ok((mut cv, lit, material, sil)) = parts.get_mut(child) {
+                // A creature's silhouette is its own dim glow (eyes, sheen); other forms are opaque
+                // dark shapes whose clarity follows the glow around them.
                 let show = match mode_vis {
                     SimVis::Lit => lit,
-                    SimVis::Silhouette if e.form == sim::Form::Creature => lit,
-                    SimVis::Silhouette => sil,
+                    SimVis::Silhouette(_) if e.form == Form::Creature => lit,
+                    SimVis::Silhouette(strength) => {
+                        if sil {
+                            if let Some(mut m) = material {
+                                let level = ((strength * (SILHOUETTE_LEVELS - 1) as f32).round() as usize).min(SILHOUETTE_LEVELS - 1);
+                                let wanted = &assets.silhouettes[level];
+                                if m.0 != *wanted {
+                                    m.0 = wanted.clone();
+                                }
+                            }
+                        }
+                        sil
+                    }
                     SimVis::Hidden => false,
                 };
                 *cv = if show { Visibility::Inherited } else { Visibility::Hidden };
@@ -293,43 +309,21 @@ fn apply_visibility(
     }
 }
 
-/// World Weaver candidates: spawn every anchor/layer form once per session, then show only the
-/// active sector's current layer during the night.
-fn sync_previews(
-    mut commands: Commands,
-    session: Res<Session>,
-    assets: Res<FormAssets>,
-    mut spawned_for: Local<u32>,
-    mut previews: Query<(&Preview, &mut Visibility, &Children)>,
-    mut parts: Query<&mut Visibility, (Without<Preview>, With<LitPart>)>,
-) {
-    let Some(world) = session.world() else { return };
-    let Rules::WorldWeaver(ww) = &world.rules else { return };
-    if *spawned_for != session.generation {
-        *spawned_for = session.generation;
-        for a in &ww.anchors {
-            for layer in 0..world.tuning().weaver_layers as u8 {
-                let form = a.form_in(layer);
-                let heading = sim::geom::bearing_of(-a.pos) + std::f32::consts::FRAC_PI_2;
-                let ent = spawn_form(&mut commands, &assets, form, heading_transform(a.pos, heading, 0.0));
-                commands.entity(ent).insert(Preview { anchor: a.name, form });
-            }
-        }
+/// Desired-heading dial line: a thin line from each observable ship toward its accepted intent.
+/// It moves the instant intent changes, while the hull turns after it. Hidden ships show nothing.
+fn draw_heading_lines(session: Res<Session>, settings: Res<Settings>, mut gizmos: Gizmos) {
+    if !settings.heading_lines {
         return;
     }
-    let show_previews = world.phase == Phase::Night;
-    let sector = world.sea.beam.sector_index(world.tuning());
-    let layer = ww.layer_for(&world.sea);
-    for (preview, mut vis, children) in &mut previews {
-        let show = show_previews
-            && ww
-                .preview(sector, layer)
-                .any(|(a, form)| a.name == preview.anchor && form == preview.form);
-        *vis = if show { Visibility::Visible } else { Visibility::Hidden };
-        for child in children.iter() {
-            if let Ok(mut cv) = parts.get_mut(child) {
-                *cv = Visibility::Inherited;
-            }
+    let Some(world) = session.world() else { return };
+    let len = world.tuning().ship_length * 1.6 * VISUAL_SCALE;
+    for e in world.sea.entities.iter().filter(|e| e.is_active_ship()) {
+        if !world.entity_visibility(e).is_visible() || e.brain.desired.is_nan() {
+            continue;
         }
+        let from = to_world_h(e.pos, 0.9);
+        let to = from + to_world(sim::geom::dir(e.brain.desired)) * len;
+        gizmos.line(from, to, Color::srgba(1.0, 0.85, 0.55, 0.55));
+        gizmos.sphere(Isometry3d::from_translation(to), 0.25, Color::srgba(1.0, 0.85, 0.55, 0.7));
     }
 }

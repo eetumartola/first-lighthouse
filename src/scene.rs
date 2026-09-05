@@ -2,12 +2,10 @@
 
 use crate::app::{to_world, to_world_h, Session, Settings};
 use crate::sea::dawn_amount;
-use crate::sim::{self, Footprint, Phase, Rules};
-use bevy::asset::RenderAssetUsages;
+use crate::sim::{self, world_weaver, Footprint, Phase, Rules};
 use bevy::camera::Exposure;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::light::{FogVolume, VolumetricFog, VolumetricLight};
-use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 
@@ -42,14 +40,6 @@ struct Reflector;
 #[derive(Component)]
 struct HarborLamp;
 
-/// World Weaver capture ring segment for one sector.
-#[derive(Component)]
-struct RingSegment(usize);
-
-/// World Weaver route buoy at a route position.
-#[derive(Component)]
-struct RouteBuoy(glam::Vec2);
-
 #[derive(Resource, Default)]
 struct SceneState {
     generation: u32,
@@ -61,15 +51,8 @@ pub struct SceneMaterials {
     pub stone: Handle<StandardMaterial>,
     pub dark_stone: Handle<StandardMaterial>,
     pub warm_glow: Handle<StandardMaterial>,
-    pub layer_glow: [Handle<StandardMaterial>; 4],
 }
 
-pub const LAYER_COLORS: [Color; 4] = [
-    Color::srgb(0.55, 0.85, 1.0),
-    Color::srgb(0.45, 1.0, 0.7),
-    Color::srgb(0.85, 0.65, 1.0),
-    Color::srgb(1.0, 0.7, 0.45),
-];
 
 pub struct ScenePlugin;
 
@@ -91,6 +74,7 @@ impl Plugin for ScenePlugin {
                     update_lighthouse,
                     update_exposure,
                     update_weaver_markers,
+                    update_world_rocks,
                 ),
             );
     }
@@ -124,19 +108,11 @@ fn setup_scene(
         emissive: LinearRgba::new(6.0, 3.2, 1.0, 1.0),
         ..default()
     });
-    let layer_glow = LAYER_COLORS.map(|c| {
-        let l = c.to_linear();
-        materials.add(StandardMaterial {
-            base_color: c,
-            emissive: LinearRgba::new(l.red * 3.0, l.green * 3.0, l.blue * 3.0, 1.0),
-            unlit: true,
-            ..default()
-        })
-    });
 
     // Camera: fixed, elevated, north up. Fog and bloom carry the atmosphere.
     commands.spawn((
         MainCamera,
+        bevy::ui::IsDefaultUiCamera,
         Camera3d::default(),
         Projection::from(PerspectiveProjection {
             fov: 47f32.to_radians(),
@@ -366,7 +342,6 @@ fn setup_scene(
         stone,
         dark_stone,
         warm_glow,
-        layer_glow,
     });
 }
 
@@ -397,73 +372,94 @@ fn sync_session_scene(
     }
 
     if let Rules::WorldWeaver(ww) = &world.rules {
-        // Every layer's reefs exist as hidden visuals; the preview/composition decides which show.
-        for reef in &ww.reefs {
-            for rock in &reef.rocks {
-                let parent = spawn_rock(&mut commands, &mut meshes, &mats, *rock);
-                commands.entity(parent).insert((
-                    SessionScoped,
-                    ReefPreview {
-                        sector: reef.sector,
-                        layer: reef.layer,
-                    },
-                    Visibility::Hidden,
-                ));
+        // Every distinct piece a sector can hold exists as a hidden visual; the preview (or the
+        // frozen composition after dawn) decides which one shows.
+        for s in 0..t.weaver_sectors {
+            let mut pieces: Vec<world_weaver::Piece> = ww.worlds.iter().map(|w| w[s]).collect();
+            pieces.dedup();
+            let mut unique = Vec::new();
+            for p in pieces {
+                if !unique.contains(&p) {
+                    unique.push(p);
+                }
+            }
+            for piece in unique {
+                for rock in piece.geometry(s, t) {
+                    let parent = spawn_rock(&mut commands, &mut meshes, &mats, rock);
+                    commands.entity(parent).insert((SessionScoped, SlicePreview { sector: s, piece }, Visibility::Hidden));
+                }
             }
         }
-    }
-
-    if let Rules::WorldWeaver(ww) = &world.rules {
-        // Segmented capture ring around the lighthouse: one thin annular sector per sector.
+        // Outer-edge markers: one dot per sector, lit once that sector has been edited.
+        let dot = meshes.add(Sphere::new(0.9));
         let a = t.sector_angle();
         for s in 0..t.weaver_sectors {
-            let mesh = meshes.add(annular_sector_mesh(10.2, 11.4, s as f32 * a + 0.02, (s + 1) as f32 * a - 0.02, 8));
+            let p = sim::geom::dir(s as f32 * a + a * 0.5) * (t.sea_radius + 3.5);
             commands.spawn((
                 SessionScoped,
-                RingSegment(s),
-                Mesh3d(mesh),
+                EditMarker(s),
+                Mesh3d(dot.clone()),
+                MeshMaterial3d(mats.warm_glow.clone()),
+                Transform::from_translation(to_world_h(p, 1.0)),
+                Visibility::Hidden,
+            ));
+        }
+        // The shipping-lane entrance is a fixed, marked scenario element.
+        let lamp = meshes.add(Sphere::new(0.55));
+        for side in [-1.0f32, 1.0] {
+            let across = sim::geom::dir(sim::geom::bearing_of(ww.lane_start) + std::f32::consts::FRAC_PI_2);
+            let p = ww.lane_start + across * side * 4.0;
+            commands.spawn((
+                SessionScoped,
+                Mesh3d(lamp.clone()),
                 MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.2, 0.25, 0.3),
-                    emissive: LinearRgba::new(0.05, 0.07, 0.1, 1.0),
+                    base_color: Color::srgb(1.0, 0.8, 0.5),
+                    emissive: LinearRgba::new(3.0, 2.0, 0.7, 1.0),
                     unlit: true,
                     ..default()
                 })),
-                Transform::from_xyz(0.0, 0.08, 0.0),
-                Visibility::Visible,
+                Transform::from_translation(to_world_h(p, 1.4)),
             ));
         }
-        // Route buoys: subtle line of lights along the authored lane, revealed sector by sector.
-        let buoy = meshes.add(Sphere::new(0.5));
-        let buoy_mat = materials.add(StandardMaterial {
-            base_color: Color::srgb(1.0, 0.8, 0.5),
-            emissive: LinearRgba::new(2.5, 1.6, 0.6, 1.0),
-            unlit: true,
-            ..default()
-        });
-        for pair in ww.route.windows(2) {
-            let len = pair[0].distance(pair[1]);
-            let n = (len / 7.0).ceil().max(1.0) as usize;
-            for i in 0..n {
-                let p = pair[0].lerp(pair[1], i as f32 / n as f32);
-                commands.spawn((
-                    SessionScoped,
-                    RouteBuoy(p),
-                    Mesh3d(buoy.clone()),
-                    MeshMaterial3d(buoy_mat.clone()),
-                    Transform::from_translation(to_world_h(p, 0.4)),
-                    Visibility::Hidden,
-                ));
+    }
+
+    if let Rules::SpiralVoyage(sv) = &world.rules {
+        // Each world's land exists as a hidden group; only the inspected world shows.
+        for (w, sw) in sv.worlds.iter().enumerate() {
+            for rock in sw.rocks.iter().skip(1) {
+                let parent = spawn_rock(&mut commands, &mut meshes, &mats, *rock);
+                commands.entity(parent).insert((SessionScoped, WorldRocks(w), Visibility::Hidden));
             }
         }
+        // The north seam, where a circuit passes into the next world.
+        commands.spawn((
+            SessionScoped,
+            Mesh3d(meshes.add(Cuboid::new(0.3, 0.1, t.sea_radius - t.island_radius - 4.0))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.8, 0.9, 1.0),
+                emissive: LinearRgba::new(0.4, 0.55, 0.9, 1.0),
+                unlit: true,
+                ..default()
+            })),
+            Transform::from_xyz(0.0, 0.08, -(t.island_radius + 2.0 + (t.sea_radius - t.island_radius - 4.0) * 0.5)),
+        ));
     }
 }
 
-/// World Weaver reef rock belonging to one candidate slice.
+/// World Weaver: one sector's candidate land, shown when previewed or built.
 #[derive(Component)]
-struct ReefPreview {
+struct SlicePreview {
     sector: usize,
-    layer: u8,
+    piece: world_weaver::Piece,
 }
+
+/// World Weaver: outer-edge dot marking an edited sector.
+#[derive(Component)]
+struct EditMarker(usize);
+
+/// Spiral Voyage: land belonging to one world.
+#[derive(Component)]
+struct WorldRocks(usize);
 
 /// A rock as a small connected cluster of boulders filling its collision circle. Deterministic
 /// from the position so retries look identical.
@@ -507,33 +503,6 @@ fn spawn_rock(
         ));
     }
     parent
-}
-
-/// Flat annular sector in the XZ plane (compass bearings), facing up.
-pub fn annular_sector_mesh(r_in: f32, r_out: f32, a0: f32, a1: f32, segments: usize) -> Mesh {
-    let mut positions = Vec::with_capacity((segments + 1) * 2);
-    let mut normals = Vec::with_capacity((segments + 1) * 2);
-    let mut uvs = Vec::with_capacity((segments + 1) * 2);
-    let mut indices = Vec::with_capacity(segments * 6);
-    for i in 0..=segments {
-        let a = a0 + (a1 - a0) * i as f32 / segments as f32;
-        let d = sim::geom::dir(a);
-        for (k, r) in [r_in, r_out].into_iter().enumerate() {
-            let p = to_world(d * r);
-            positions.push([p.x, p.y, p.z]);
-            normals.push([0.0, 1.0, 0.0]);
-            uvs.push([i as f32 / segments as f32, k as f32]);
-        }
-    }
-    for i in 0..segments as u32 {
-        let b = i * 2;
-        indices.extend_from_slice(&[b, b + 1, b + 2, b + 1, b + 3, b + 2]);
-    }
-    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        .with_inserted_indices(Indices::U32(indices))
 }
 
 /// How lit the beacon is: ramps during ignition, full at night, fades at dawn.
@@ -647,8 +616,8 @@ fn update_exposure(
     mut ambient: ResMut<GlobalAmbientLight>,
 ) {
     let dawn = session.world().map(dawn_amount).unwrap_or(0.0);
-    // Ignition flare: the whole sea is lit warm for a moment, matching the sim's reveal.
-    let flare = session.world().map(|w| w.flare()).unwrap_or(0.0);
+    // Dusk: the sea starts visible in warm evening light and fades to darkness as the night begins.
+    let flare = session.world().map(|w| w.dusk()).unwrap_or(0.0);
     for mut e in &mut cams {
         e.ev100 = BASE_EV100 - settings.brightness + dawn * 3.6;
     }
@@ -666,52 +635,40 @@ fn update_exposure(
     ambient.color = Color::LinearRgba(LinearRgba::new(0.5, 0.65, 0.9, 1.0).mix(&LinearRgba::new(0.9, 0.85, 0.8, 1.0), dawn));
 }
 
-/// World Weaver: colour committed ring segments by layer and reveal buoys inside the lit sector.
+/// World Weaver: the lit sector previews its current piece (World 1 shows the assembled result);
+/// after dawn the frozen composition shows everywhere. Edited sectors get an outer-edge dot.
 fn update_weaver_markers(
     session: Res<Session>,
-    mats: Res<SceneMaterials>,
-    mut segments: Query<(&RingSegment, &mut MeshMaterial3d<StandardMaterial>)>,
-    mut buoys: Query<(&RouteBuoy, &mut Visibility), Without<ReefPreview>>,
-    mut reefs: Query<(&ReefPreview, &mut Visibility), Without<RouteBuoy>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut uncaptured: Local<Option<Handle<StandardMaterial>>>,
+    mut slices: Query<(&SlicePreview, &mut Visibility), Without<EditMarker>>,
+    mut markers: Query<(&EditMarker, &mut Visibility), Without<SlicePreview>>,
 ) {
     let Some(world) = session.world() else { return };
     let Rules::WorldWeaver(ww) = &world.rules else { return };
-    let dim = uncaptured
-        .get_or_insert_with(|| {
-            materials.add(StandardMaterial {
-                base_color: Color::srgb(0.2, 0.25, 0.3),
-                emissive: LinearRgba::new(0.05, 0.07, 0.1, 1.0),
-                unlit: true,
-                ..default()
-            })
-        })
-        .clone();
     let active = world.sea.beam.sector_index(world.tuning());
-    for (seg, mut mat) in &mut segments {
-        let handle = match ww.committed[seg.0] {
-            Some(layer) => mats.layer_glow[layer as usize].clone(),
-            None if seg.0 == active && world.phase == Phase::Night => mats.warm_glow.clone(),
-            None => dim.clone(),
-        };
-        if mat.0 != handle {
-            mat.0 = handle;
-        }
-    }
-    let fp = world.footprint();
-    let reveal_all = !matches!(world.phase, Phase::Night | Phase::Intro { .. });
-    for (buoy, mut vis) in &mut buoys {
-        let show = reveal_all || (world.phase == Phase::Night && fp.contains(buoy.0));
-        *vis = if show { Visibility::Visible } else { Visibility::Hidden };
-    }
-    // Reefs: the lit sector previews its current layer; after dawn only the built layers exist.
     let layer = ww.layer_for(&world.sea);
-    for (reef, mut vis) in &mut reefs {
+    for (slice, mut vis) in &mut slices {
         let show = match &ww.built {
-            Some(built) => built[reef.sector] == reef.layer,
-            None => world.phase == Phase::Night && reef.sector == active && reef.layer == layer,
+            Some(built) => built[slice.sector] == slice.piece,
+            // Dusk shows World 1 whole; the night shows only the lit sector's candidate.
+            None => match world.phase {
+                Phase::Intro { .. } => ww.assembled[slice.sector] == slice.piece,
+                Phase::Night => slice.sector == active && ww.piece(layer, slice.sector) == slice.piece,
+                _ => false,
+            },
         };
         *vis = if show { Visibility::Visible } else { Visibility::Hidden };
+    }
+    for (marker, mut vis) in &mut markers {
+        *vis = if ww.edited[marker.0] { Visibility::Visible } else { Visibility::Hidden };
+    }
+}
+
+/// Spiral Voyage: only the inspected world's land is shown.
+fn update_world_rocks(session: Res<Session>, mut rocks: Query<(&WorldRocks, &mut Visibility)>) {
+    let Some(world) = session.world() else { return };
+    let Rules::SpiralVoyage(_) = &world.rules else { return };
+    let inspected = world.inspected_world();
+    for (group, mut vis) in &mut rocks {
+        *vis = if group.0 == inspected { Visibility::Visible } else { Visibility::Hidden };
     }
 }

@@ -65,18 +65,6 @@ pub fn resolve_circle(pos: Vec2, radius: f32, obstacle: &Circle) -> (Vec2, bool)
     (obstacle.center + n * min, true)
 }
 
-/// Distance from point `p` to segment `a`-`b`.
-#[cfg(test)]
-pub fn segment_distance(p: Vec2, a: Vec2, b: Vec2) -> f32 {
-    let ab = b - a;
-    let len_sq = ab.length_squared();
-    if len_sq < 1e-8 {
-        return p.distance(a);
-    }
-    let t = ((p - a).dot(ab) / len_sq).clamp(0.0, 1.0);
-    p.distance(a + ab * t)
-}
-
 /// Eight-wind compass word for a position relative to the lighthouse.
 pub fn compass_word(p: Vec2) -> &'static str {
     const WORDS: [&str; 8] = [

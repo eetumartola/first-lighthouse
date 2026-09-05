@@ -131,11 +131,11 @@ pub fn step(_ms: &mut MutableSea, sea: &mut Sea, dt: f32) {
         .map(|e| e.id)
         .collect();
     for cid in creature_ids {
-        let lights = steering::collect_lights(&sea.guidance, &sea.charge, &sea.entities, &t);
         let land = sea.land_for(cid);
         let Some(idx) = sea.entities.iter().position(|e| e.id == cid) else { continue };
-        let creature = &mut sea.entities[idx];
-        steering::steer_creature(creature, &lights, &land, &t, t.creature_speed, t.creature_detect_radius, dt);
+        let Sea { entities, charge, .. } = sea;
+        let creature = &mut entities[idx];
+        steering::steer_predator(creature, charge, &land, &t, dt);
         let reach = Circle::new(creature.pos, t.creature_contact_radius);
         let victims: Vec<usize> = sea
             .entities

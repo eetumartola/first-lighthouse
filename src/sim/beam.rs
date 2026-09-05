@@ -27,12 +27,16 @@ pub enum FootprintKind {
 pub struct Beam {
     /// Unwrapped compass angle; grows without bound so revolutions can be counted.
     pub winding: f32,
+    /// Current angular velocity (rad/s); held input accelerates, release brakes promptly.
+    pub angular_velocity: f32,
     /// Distance from the lighthouse to the footprint centre.
     pub range: f32,
     /// Developer experiment: rotation continues after release in this direction.
     pub constant_speed: bool,
     pub auto_direction: f32,
     pub kind: FootprintKind,
+    /// Finite winding range (Spiral Voyage): the beam cannot wind past these worlds.
+    pub winding_limits: Option<(f32, f32)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -128,10 +132,12 @@ impl Beam {
     pub fn new(kind: FootprintKind, tuning: &Tuning) -> Self {
         Self {
             winding: 0.0,
+            angular_velocity: 0.0,
             range: (tuning.beam_min_range() + tuning.beam_max_range()) * 0.5,
             constant_speed: false,
             auto_direction: 0.0,
             kind,
+            winding_limits: None,
         }
     }
 
@@ -146,15 +152,33 @@ impl Beam {
     }
 
     pub fn update(&mut self, input: Input, tuning: &Tuning, dt: f32) {
-        let rotate = if self.constant_speed {
+        let max_speed = TAU / tuning.beam_turn_seconds;
+        if self.constant_speed {
             if input.rotate != 0.0 {
                 self.auto_direction = input.rotate.signum();
             }
-            self.auto_direction * TAU / tuning.auto_turn_seconds
+            self.angular_velocity = self.auto_direction * TAU / tuning.auto_turn_seconds;
         } else {
-            input.rotate.clamp(-1.0, 1.0) * TAU / tuning.beam_turn_seconds
-        };
-        self.winding += rotate * dt;
+            // Deliberate handling: modest acceleration toward the commanded speed, quick braking.
+            let target = input.rotate.clamp(-1.0, 1.0) * max_speed;
+            let rate = if target == 0.0 {
+                max_speed / tuning.beam_stop_seconds
+            } else {
+                max_speed / tuning.beam_accel_seconds
+            };
+            let delta = target - self.angular_velocity;
+            self.angular_velocity += delta.clamp(-rate * dt, rate * dt);
+            if target == 0.0 && self.angular_velocity.abs() < 1e-3 {
+                self.angular_velocity = 0.0;
+            }
+        }
+        self.winding += self.angular_velocity * dt;
+        if let Some((lo, hi)) = self.winding_limits {
+            if self.winding <= lo || self.winding >= hi {
+                self.winding = self.winding.clamp(lo, hi);
+                self.angular_velocity = 0.0;
+            }
+        }
 
         if self.kind == FootprintKind::Spot {
             self.range = (self.range + input.range.clamp(-1.0, 1.0) * tuning.beam_range_speed * dt)
@@ -194,22 +218,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn full_turn_takes_configured_seconds() {
+    fn full_turn_at_speed_takes_configured_seconds_and_release_stops_promptly() {
         let t = Tuning::default();
         let mut b = Beam::new(FootprintKind::Spot, &t);
-        let steps = (t.beam_turn_seconds * 60.0) as usize;
-        for _ in 0..steps {
-            b.update(
-                Input {
-                    rotate: 1.0,
-                    ..Default::default()
-                },
-                &t,
-                1.0 / 60.0,
-            );
+        let held = Input { rotate: 1.0, ..Default::default() };
+        // Accelerate to the cap, then measure one revolution at speed.
+        for _ in 0..(t.beam_accel_seconds * 60.0) as usize + 2 {
+            b.update(held, &t, 1.0 / 60.0);
         }
-        assert!((b.winding - TAU).abs() < 1e-3);
-        assert_eq!(b.revolution(), 1);
+        let start = b.winding;
+        for _ in 0..(t.beam_turn_seconds * 60.0) as usize {
+            b.update(held, &t, 1.0 / 60.0);
+        }
+        assert!((b.winding - start - TAU).abs() < 1e-2, "{}", b.winding - start);
+        // Release: the beam comes to rest within the stop time, without overshooting a sector.
+        let at_release = b.winding;
+        for _ in 0..(t.beam_stop_seconds * 60.0) as usize + 2 {
+            b.update(Input::default(), &t, 1.0 / 60.0);
+        }
+        assert_eq!(b.angular_velocity, 0.0);
+        assert!(b.winding - at_release < t.sector_angle() * 0.5, "overshoot {}", b.winding - at_release);
+    }
+
+    #[test]
+    fn finite_winding_limits_hold() {
+        let t = Tuning::default();
+        let mut b = Beam::new(FootprintKind::Spot, &t);
+        b.winding_limits = Some((0.0, TAU));
+        for _ in 0..(60.0 * 20.0) as usize {
+            b.update(Input { rotate: 1.0, ..Default::default() }, &t, 1.0 / 60.0);
+        }
+        assert_eq!(b.winding, TAU);
+        for _ in 0..(60.0 * 20.0) as usize {
+            b.update(Input { rotate: -1.0, ..Default::default() }, &t, 1.0 / 60.0);
+        }
+        assert_eq!(b.winding, 0.0);
     }
 
     #[test]

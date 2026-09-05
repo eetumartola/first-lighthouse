@@ -172,10 +172,11 @@ fn update_sea(
     }
     params.dawn = dawn_amount(world);
 
-    // Upload the charge grid: one byte per cell, row j = sim y from -R upward.
+    // Upload the charge grid of the inspected world (the spiral keeps one per world): one byte
+    // per cell, row j = sim y from -R upward.
     if let Some(mut image) = images.get_mut(&handles.charge_image) {
         if let Some(data) = image.data.as_mut() {
-            let field = &world.sea.charge;
+            let field = world.view_charge();
             let cap = world.tuning().charge_cap;
             debug_assert_eq!(data.len(), field.charge.len());
             for (dst, c) in data.iter_mut().zip(field.charge.iter()) {

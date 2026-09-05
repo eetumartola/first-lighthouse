@@ -8,6 +8,7 @@ mod labels;
 mod scene;
 mod sea;
 mod sim;
+mod spiral_widget;
 mod ui;
 
 use bevy::prelude::*;
@@ -42,6 +43,7 @@ fn main() {
             ui::UiPlugin,
             audio::AudioPlugin,
             debug::DebugPlugin,
+            spiral_widget::SpiralWidgetPlugin,
         ))
         .add_systems(Update, dispatch_audio)
         .run();
