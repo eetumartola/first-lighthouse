@@ -219,7 +219,7 @@ fn gather_capture(keys: Res<ButtonInput<KeyCode>>, mut session: ResMut<Session>)
 
 fn step_simulation(
     keys: Res<ButtonInput<KeyCode>>,
-    settings: Res<Settings>,
+    mut settings: ResMut<Settings>,
     time: Res<Time<Fixed>>,
     mut session: ResMut<Session>,
 ) {
@@ -238,6 +238,22 @@ fn step_simulation(
         range: axis(&[KeyCode::KeyS, KeyCode::ArrowDown], &[KeyCode::KeyW, KeyCode::ArrowUp]),
         capture,
     };
+    // A fresh beam control hands the lamp back to the player; the keeper never fights a hand on
+    // it. Fresh presses only: the D that starts a demo from the menu is still held this step.
+    const BEAM_KEYS: [KeyCode; 9] = [
+        KeyCode::KeyA,
+        KeyCode::KeyD,
+        KeyCode::KeyW,
+        KeyCode::KeyS,
+        KeyCode::ArrowLeft,
+        KeyCode::ArrowRight,
+        KeyCode::ArrowUp,
+        KeyCode::ArrowDown,
+        KeyCode::Space,
+    ];
+    if settings.autopilot && BEAM_KEYS.iter().any(|k| keys.just_pressed(*k)) {
+        settings.autopilot = false;
+    }
     let input = match keeper.as_mut() {
         Some(k) if settings.autopilot => k.input(world),
         _ => manual,

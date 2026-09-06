@@ -106,7 +106,7 @@ fn spawn_menu(mut commands: Commands, menu: Res<MenuState>) {
                 ));
             }
             root.spawn((
-                Text::new("Up / Down choose    Enter begin    [ ] brightness    F4 constant-speed rotation    F3 debug overlay    F6 skip to dawn"),
+                Text::new("Up / Down choose    Enter begin    D watch a demo    [ ] brightness    F4 constant-speed rotation    F3 debug overlay    F6 skip to dawn"),
                 font(16.0),
                 TextColor(DIM),
                 Node {
@@ -122,6 +122,7 @@ fn menu_input(
     mut menu: ResMut<MenuState>,
     mut entries: Query<(&MenuEntry, &mut TextColor)>,
     mut session: ResMut<Session>,
+    mut settings: ResMut<Settings>,
     mut next: ResMut<NextState<AppState>>,
 ) {
     let n = Mode::MENU.len();
@@ -134,7 +135,11 @@ fn menu_input(
     for (entry, mut color) in &mut entries {
         color.0 = if entry.0 == menu.selected { INK } else { DIM };
     }
-    if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
+    let begin = keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space);
+    // Demo: the scripted keeper plays the selected scenario; any beam input takes over.
+    let demo = keys.just_pressed(KeyCode::KeyD);
+    if begin || demo {
+        settings.autopilot = demo;
         session.start(Mode::MENU[menu.selected]);
         next.set(AppState::Playing);
     }
@@ -243,6 +248,7 @@ fn despawn_hud(mut commands: Commands, hud: Query<Entity, With<HudRoot>>) {
 
 fn update_hud(
     session: Res<Session>,
+    settings: Res<Settings>,
     mut timer: Query<&mut Text, (With<HudTimer>, Without<HudScore>, Without<HudWeaver>)>,
     mut score: Query<&mut Text, (With<HudScore>, Without<HudTimer>, Without<HudWeaver>)>,
     mut weaver: Query<&mut Text, (With<HudWeaver>, Without<HudTimer>, Without<HudScore>, Without<HudHint>)>,
@@ -317,6 +323,9 @@ fn update_hud(
         t.0 = weaver_text.clone();
     }
     let hint_text = match world.phase {
+        Phase::Intro { .. } | Phase::Night if settings.autopilot => {
+            "Demo: the keeper is at the lamp.    Any beam control takes over    Esc pause"
+        }
         Phase::Intro { .. } | Phase::Night => world.mode.controls(),
         Phase::Dawn { .. } => "First light. The sea is revealed.",
         Phase::Playback => "The ship follows the passage it found through your sea.    Esc pause",
@@ -448,7 +457,7 @@ fn spawn_pause(mut commands: Commands) {
 fn update_pause_text(settings: Res<Settings>, mut text: Query<&mut Text, With<PauseSettingsText>>) {
     for mut t in &mut text {
         t.0 = format!(
-            "[ ]  brightness {:+.1} stops\nF4   constant-speed rotation: {}\nF3   debug overlay: {}\nF6   skip to dawn    F9   autopilot: {}",
+            "[ ]  brightness {:+.1} stops\nF4   constant-speed rotation: {}\nF3   debug overlay: {}\nF6   skip to dawn    F9   demo keeper: {}",
             settings.brightness,
             if settings.constant_speed_rotation { "on" } else { "off" },
             if settings.debug_overlay { "on" } else { "off" },
