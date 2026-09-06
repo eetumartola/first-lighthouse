@@ -104,9 +104,10 @@ fn setup_assets(
             ..default()
         }),
         creature: materials.add(StandardMaterial {
-            base_color: Color::srgb(0.07, 0.15, 0.15),
-            // Faint bioluminescent sheen so a surfacing creature reads against black water.
-            emissive: LinearRgba::new(0.12, 0.55, 0.5, 1.0),
+            base_color: Color::srgb(0.06, 0.12, 0.13),
+            // Faint bioluminescent sheen so a surfacing creature reads against black water, weak
+            // enough that the facets still shade.
+            emissive: LinearRgba::new(0.04, 0.2, 0.18, 1.0),
             perceptual_roughness: 0.55,
             reflectance: 0.6,
             ..default()
