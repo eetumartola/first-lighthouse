@@ -568,14 +568,26 @@ fn beacon_level(world: &sim::World) -> f32 {
     }
 }
 
+/// Bearing and level of the idle beacon on the menu: a slow sweep so the title screen is alive.
+fn idle_beacon(time: &Time) -> (f32, f32) {
+    (time.elapsed_secs() * 0.15, 0.6)
+}
+
 fn update_beam_lights(
     session: Res<Session>,
+    time: Res<Time>,
     mut tower: Query<(&mut Transform, &mut SpotLight), (With<TowerBeam>, Without<FootprintLight>)>,
     mut patch: Query<(&mut Transform, &mut SpotLight), (With<FootprintLight>, Without<TowerBeam>)>,
 ) {
     let Some(world) = session.world() else {
-        for (_, mut l) in &mut tower {
-            l.intensity = 0.0;
+        let (bearing, level) = idle_beacon(&time);
+        let target = to_world_h(sim::geom::dir(bearing) * 70.0, 0.0);
+        for (mut tf, mut l) in &mut tower {
+            *tf = Transform::from_xyz(0.0, 14.6, 0.0).looking_at(target, Vec3::Y);
+            l.outer_angle = 0.13;
+            l.inner_angle = 0.04;
+            l.range = 120.0;
+            l.intensity = 140_000.0 * level;
         }
         for (_, mut l) in &mut patch {
             l.intensity = 0.0;
@@ -643,7 +655,10 @@ fn update_lighthouse(
 ) {
     let (level, bearing) = match session.world() {
         Some(w) => (beacon_level(w), session.view_beam().map_or(w.sea.beam.bearing(), |b| b.bearing())),
-        None => (0.0, time.elapsed_secs() * 0.15),
+        None => {
+            let (bearing, level) = idle_beacon(&time);
+            (level, bearing)
+        }
     };
     let flicker = 1.0 + 0.08 * (time.elapsed_secs() * 17.0).sin() + 0.05 * (time.elapsed_secs() * 29.0).sin();
     for mut tf in &mut flame {

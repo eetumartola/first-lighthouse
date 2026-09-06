@@ -88,7 +88,9 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
     let turns = Tuning::default().spiral_worlds;
     let layer = RenderLayers::layer(LAYER);
     let dim = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.32, 0.34, 0.38),
+        base_color: Color::srgb(0.42, 0.45, 0.5),
+        // Self-lit a little so the unvisited worlds still read against the dark sea.
+        emissive: LinearRgba::new(0.18, 0.2, 0.26, 1.0),
         perceptual_roughness: 0.7,
         double_sided: true,
         cull_mode: None,
@@ -150,13 +152,20 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
             order: 1,
             clear_color: ClearColorConfig::None,
             is_active: false,
+            // Alpha-blend onto the main image: the default write mode would replace the whole
+            // viewport with this camera's (mostly empty) output as a black box.
+            output_mode: bevy::camera::CameraOutputMode::Write {
+                blend_state: Some(bevy::render::render_resource::BlendState::ALPHA_BLENDING),
+                clear_color: ClearColorConfig::None,
+            },
             ..default()
         },
         Projection::from(PerspectiveProjection {
-            fov: 30f32.to_radians(),
+            fov: 20f32.to_radians(),
             ..default()
         }),
-        Transform::from_xyz(0.0, mid_height + 1.1, 9.0).looking_at(Vec3::new(0.0, mid_height, 0.0), Vec3::Y),
+        // Looking down at the stack from a distance so each turn reads as an elliptical step.
+        Transform::from_xyz(0.0, mid_height + 5.5, 15.0).looking_at(Vec3::new(0.0, mid_height, 0.0), Vec3::Y),
         Tonemapping::TonyMcMapface,
         // No MSAA: a multisampled second camera resolves over the main image instead of blending.
         Msaa::Off,
