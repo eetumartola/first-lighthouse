@@ -26,8 +26,8 @@ pub struct Settings {
     pub autopilot: bool,
     /// Desired-heading dial lines on observable ships (F5). On by default in prototype play.
     pub heading_lines: bool,
-    /// Developer experiment (F7): the spotlight modes also show the beam's whole thin sector
-    /// dimly on the water, as Spiral Voyage always does. Presentation only; charging unchanged.
+    /// Developer toggle (F7): spotlight modes show the beam's whole thin sector dimly on the
+    /// water. On by default; Spiral Voyage always keeps it visible.
     pub beam_lane: bool,
     /// Sea fog that the beam parts (F8). On by default.
     pub fog: bool,
@@ -41,7 +41,7 @@ impl Default for Settings {
             debug_overlay: false,
             autopilot: false,
             heading_lines: true,
-            beam_lane: false,
+            beam_lane: true,
             fog: true,
         }
     }

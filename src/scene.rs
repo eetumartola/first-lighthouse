@@ -574,12 +574,9 @@ fn spawn_land(
         .into_iter()
         .map(|cluster| {
             let center = models::cluster_center(&cluster);
-            // Drawn a touch thinner than the hull-blocking circles: the water reads as passable
-            // right up to the visible rock.
-            let drawn: Vec<sim::Circle> = cluster.iter().map(|c| sim::Circle::new(c.center, c.radius * 0.9)).collect();
             let entity = commands
                 .spawn((
-                    Mesh3d(meshes.add(models::island(&drawn, center, None))),
+                    Mesh3d(meshes.add(models::island(&cluster, center, None))),
                     MeshMaterial3d(mats.dark_stone.clone()),
                     Transform::from_translation(to_world_h(center, 0.0)),
                 ))

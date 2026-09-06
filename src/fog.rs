@@ -110,6 +110,19 @@ fn camera_side_half_width(bearing: f32, delta: f32, near_half: f32, far_half: f3
     }
 }
 
+/// Beam-relative clearance across one angular shoulder. The whole shoulder participates so there
+/// is no clear plateau ending in a short, abrupt fade.
+fn clearance_profile(u: f32) -> f32 {
+    let u = u.clamp(0.0, 1.0);
+    1.0 - u * u * (3.0 - 2.0 * u)
+}
+
+/// Fully parted fog retains ten percent of its local density so the illuminated beam still has
+/// mist to reveal; untouched fog remains at full density.
+fn fog_density_multiplier(clearance: f32) -> f32 {
+    1.0 - 0.9 * clearance.clamp(0.0, 1.0)
+}
+
 fn update(
     time: Res<Time>,
     session: Res<Session>,
@@ -166,12 +179,10 @@ fn update(
                 let point_bearing = crate::sim::geom::bearing_of(p);
                 let d = crate::sim::geom::angle_delta(bearing, point_bearing);
                 let half = camera_side_half_width(bearing, d, near_half, far_half, camera_sim);
-                // Broad clear core with feathered shoulders: the spotlight and its water patch
-                // cannot be swallowed by illuminated mist.
-                let u = (d.abs() / half).clamp(0.0, 1.0);
-                let shoulder = ((u - 0.55) / 0.45).clamp(0.0, 1.0);
-                let part = 1.0 - shoulder * shoulder * (3.0 - 2.0 * shoulder);
-                c = c.max(part);
+                // Fade over the full camera-relative shoulder instead of cutting from a broad
+                // empty core to full fog. The density conversion below retains mist at the center.
+                let u = d.abs() / half;
+                c = c.max(clearance_profile(u));
             }
             state.clearance[z * N + x] = c.clamp(0.0, 1.0);
         }
@@ -196,7 +207,7 @@ fn update(
                         // Fade out beyond the playable sea so the slab's box never shows.
                         let radius = cell_sim(x, z).length();
                         let edge = 1.0 - ((radius - 78.0) / 32.0).clamp(0.0, 1.0);
-                        let d = n * edge * (1.0 - state.clearance[z * N + x]);
+                        let d = n * edge * fog_density_multiplier(state.clearance[z * N + x]);
                         data[(z * H + y) * N + x] = (d * 255.0) as u8;
                     }
                 }
@@ -240,5 +251,23 @@ mod tests {
         // The shoulder multipliers remain 4.5x and 9x the beam half-angle.
         assert!((near / (beam_half * 9.0) - 0.5).abs() < f32::EPSILON);
         assert!((far / beam_half - 9.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn fog_opening_fades_gradually_and_keeps_center_mist() {
+        let center = fog_density_multiplier(clearance_profile(0.0));
+        let middle = fog_density_multiplier(clearance_profile(0.5));
+        let edge = fog_density_multiplier(clearance_profile(1.0));
+
+        assert!((center - 0.1).abs() < 1e-6);
+        assert!(center < middle && middle < edge);
+        assert!((edge - 1.0).abs() < f32::EPSILON);
+
+        let mut previous = center;
+        for step in 1..=100 {
+            let density = fog_density_multiplier(clearance_profile(step as f32 / 100.0));
+            assert!(density >= previous);
+            previous = density;
+        }
     }
 }

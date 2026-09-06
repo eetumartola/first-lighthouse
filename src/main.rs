@@ -3,8 +3,8 @@
 mod app;
 mod audio;
 mod debug;
-mod fog;
 mod entities;
+mod fog;
 mod labels;
 mod models;
 mod scene;

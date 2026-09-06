@@ -483,7 +483,13 @@ pub fn compass_rose(inner: f32, outer: f32) -> Mesh {
     // Ticks every 10°: cardinals span the band, every 30° two thirds, the rest one third.
     for i in 0..36 {
         let a = i as f32 / 36.0 * TAU;
-        let len = if i % 9 == 0 { 1.0 } else if i % 3 == 0 { 0.62 } else { 0.3 };
+        let len = if i % 9 == 0 {
+            1.0
+        } else if i % 3 == 0 {
+            0.62
+        } else {
+            0.3
+        };
         let half = if i % 9 == 0 { 0.006 } else { 0.0035 };
         let (r0, r1) = (inner + 0.4, inner + 0.4 + (outer - inner - 0.8) * len);
         soup.color = Some(if i % 9 == 0 { mid } else { dim });
