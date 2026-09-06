@@ -670,7 +670,7 @@ fn update_exposure(
         let pos = Vec3::new(-60.0, 120.0, -40.0).lerp(Vec3::new(160.0, 45.0, -20.0), dawn);
         *tf = Transform::from_translation(pos).looking_at(Vec3::ZERO, Vec3::Y);
     }
-    ambient.brightness = 4.0 + dawn * 300.0 + flare * 60.0;
+    ambient.brightness = 2.6 + dawn * 300.0 + flare * 60.0;
     ambient.color =
         Color::LinearRgba(LinearRgba::new(0.5, 0.65, 0.9, 1.0).mix(&LinearRgba::new(0.9, 0.85, 0.8, 1.0), dawn));
 }

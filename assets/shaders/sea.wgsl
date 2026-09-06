@@ -80,17 +80,23 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let r = length(sim);
     let t = sea.time;
 
-    // Ripples: a few travelling waves perturb the shading normal.
-    let w1 = sin(dot(sim, vec2<f32>(0.35, 0.20)) + t * 1.1);
-    let w2 = sin(dot(sim, vec2<f32>(-0.22, 0.41)) * 1.3 + t * 0.8);
-    let w3 = sin(dot(sim, vec2<f32>(0.13, -0.30)) * 2.1 + t * 1.7);
+    // Ripples: a few travelling waves perturb the shading normal. Their phases are warped by
+    // noise so the set never locks into a visible lattice.
     let w4 = value_noise(sim * 0.6 + vec2<f32>(t * 0.2, -t * 0.13)) * 2.0 - 1.0;
-    let tilt = vec3<f32>(0.045 * (w1 + w3) + 0.03 * w4, 0.0, 0.045 * (w2 - w3) - 0.03 * w4);
+    let warp = w4 * 1.8;
+    let w1 = sin(dot(sim, vec2<f32>(0.35, 0.20)) + t * 1.1 + warp);
+    let w2 = sin(dot(sim, vec2<f32>(-0.22, 0.41)) * 1.3 + t * 0.8 - warp);
+    let w3 = sin(dot(sim, vec2<f32>(0.13, -0.30)) * 2.1 + t * 1.7 + warp * 0.7);
+    // Daylight calms the perturbation: the low sun otherwise glitters off every crest.
+    let calm = 1.0 - 0.75 * sea.dawn;
+    let tilt = vec3<f32>(0.045 * (w1 + w3) + 0.03 * w4, 0.0, 0.045 * (w2 - w3) - 0.03 * w4) * calm;
     pbr_input.N = normalize(pbr_input.N + tilt);
 
     // Plankton: charge in seconds of remaining afterglow. G holds shore proximity.
     let uv = (sim + vec2<f32>(sea.sea_radius)) / (2.0 * sea.sea_radius);
-    let grid = textureSample(charge_tex, charge_sampler, uv);
+    // Outside the playable disc the sampler would clamp to the rim texels and smear coastal
+    // values outward as radial streaks; the water there is plain.
+    let grid = textureSample(charge_tex, charge_sampler, uv) * select(0.0, 1.0, r <= sea.sea_radius);
     let charge = grid.r * sea.charge_cap;
     let shore = grid.g;
     let faint = smoothstep(0.0, sea.strong_threshold, charge);
@@ -100,7 +106,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let motes = smoothstep(0.55, 0.9, mote_field) * 1.6 + 0.08;
     let coverage = mix(motes, 1.0, faint * faint);
     let shimmer = 0.88 + 0.12 * sin(t * 2.4 + value_noise(sim * 0.9) * TAU);
-    let glow = faint * coverage * (0.6 + 2.6 * strong) * shimmer;
+    // Even saturated water keeps some grain: slow swirls of denser plankton drift through it.
+    let swirl = 0.78 + 0.22 * value_noise(sim * 0.45 + vec2<f32>(-t * 0.05, t * 0.08));
+    let glow = faint * coverage * (0.6 + 2.0 * strong * swirl) * shimmer;
     let plankton_color = mix(vec3<f32>(0.10, 0.55, 0.75), vec3<f32>(0.35, 0.95, 0.95), strong);
     var emissive = plankton_color * glow;
 
@@ -139,8 +147,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     pbr_input.material.base_color = mix(pbr_input.material.base_color, lit_water, fp * select(0.85, 0.2, sea.fp_kind == 2u) + lane * 0.12);
 
     // Dawn: the sea lightens and the plankton fades against daylight. Foam and wakes below sit
-    // on top of the daylit water.
+    // on top of the daylit water. Daylit water is rougher so the low sun does not glitter into an
+    // aliased grid on the ripple normals.
     emissive = emissive * (1.0 - 0.85 * sea.dawn);
+    pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, 0.85, sea.dawn);
     pbr_input.material.base_color = mix(
         pbr_input.material.base_color,
         vec4<f32>(0.05, 0.13, 0.17, 1.0),
