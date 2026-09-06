@@ -58,6 +58,8 @@ struct SceneState {
 #[derive(Resource)]
 pub struct SceneMaterials {
     pub dark_stone: Handle<StandardMaterial>,
+    /// Remembered land: a faint translucent outline of what the player already placed.
+    pub ghost_stone: Handle<StandardMaterial>,
     pub warm_glow: Handle<StandardMaterial>,
 }
 
@@ -314,9 +316,8 @@ fn setup_scene(
     commands.spawn((
         Mesh3d(meshes.add(models::compass_rose(t.sea_radius + 6.0, t.sea_radius + 16.0))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            // Faint self-light so it reads at night without ever competing with the beam.
-            emissive: LinearRgba::new(0.12, 0.12, 0.12, 1.0),
+            // Unlit vertex colour, scaled down: it must never compete with the beam.
+            base_color: Color::linear_rgb(0.2, 0.2, 0.2),
             unlit: true,
             cull_mode: None,
             ..default()
@@ -345,7 +346,13 @@ fn setup_scene(
         ));
     }
 
-    commands.insert_resource(SceneMaterials { dark_stone, warm_glow });
+    let ghost_stone = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.55, 0.65, 0.8, 0.16),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    commands.insert_resource(SceneMaterials { dark_stone, ghost_stone, warm_glow });
 }
 
 /// Equirectangular star field: dense faint stars, a few bright ones, and a cold glow band just
@@ -708,24 +715,36 @@ fn update_exposure(
 /// after dawn the frozen composition shows everywhere. Edited sectors get an outer-edge dot.
 fn update_weaver_markers(
     session: Res<Session>,
-    mut slices: Query<(&SlicePreview, &mut Visibility), Without<EditMarker>>,
+    mats: Res<SceneMaterials>,
+    mut slices: Query<(&SlicePreview, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), Without<EditMarker>>,
     mut markers: Query<(&EditMarker, &mut Visibility), Without<SlicePreview>>,
 ) {
     let Some(world) = session.world() else { return };
     let Rules::WorldWeaver(ww) = &world.rules else { return };
     let active = world.sea.beam.sector_index(world.tuning());
     let layer = ww.layer_for(&world.sea);
-    for (slice, mut vis) in &mut slices {
-        let show = match &ww.built {
-            Some(built) => built[slice.sector] == slice.piece,
-            // Dusk shows World 1 whole; the night shows only the lit sector's candidate.
+    for (slice, mut vis, mut material) in &mut slices {
+        // Solid: the lit sector's candidate (or the whole built sea after dawn). Ghost: what the
+        // player has already copied into World 1, so the composition stays in mind in the dark.
+        let (show, ghost) = match &ww.built {
+            Some(built) => (built[slice.sector] == slice.piece, false),
             None => match world.phase {
-                Phase::Intro { .. } => ww.assembled[slice.sector] == slice.piece,
-                Phase::Night => slice.sector == active && ww.piece(layer, slice.sector) == slice.piece,
-                _ => false,
+                Phase::Intro { .. } => (ww.assembled[slice.sector] == slice.piece, false),
+                Phase::Night => {
+                    if slice.sector == active {
+                        (ww.piece(layer, slice.sector) == slice.piece, false)
+                    } else {
+                        (ww.edited[slice.sector] && ww.assembled[slice.sector] == slice.piece, true)
+                    }
+                }
+                _ => (false, false),
             },
         };
         *vis = if show { Visibility::Visible } else { Visibility::Hidden };
+        let want = if ghost { &mats.ghost_stone } else { &mats.dark_stone };
+        if material.0 != *want {
+            material.0 = want.clone();
+        }
     }
     for (marker, mut vis) in &mut markers {
         *vis = if ww.edited[marker.0] { Visibility::Visible } else { Visibility::Hidden };
