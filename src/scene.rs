@@ -659,7 +659,7 @@ fn update_beam_lights(
         };
         light.outer_angle = half.min(1.2);
         light.inner_angle = light.outer_angle * 0.3;
-        light.intensity = if shaft_on { 600_000.0 * level } else { 0.0 };
+        light.intensity = if shaft_on { 300_000.0 * level } else { 0.0 };
     }
 
     for (mut tf, mut light) in &mut patch {

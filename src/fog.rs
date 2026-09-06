@@ -117,10 +117,10 @@ fn clearance_profile(u: f32) -> f32 {
     1.0 - u * u * (3.0 - 2.0 * u)
 }
 
-/// Fully parted fog retains ten percent of its local density so the illuminated beam still has
+/// Fully parted fog retains five percent of its local density so the illuminated beam still has
 /// mist to reveal; untouched fog remains at full density.
 fn fog_density_multiplier(clearance: f32) -> f32 {
-    1.0 - 0.9 * clearance.clamp(0.0, 1.0)
+    1.0 - 0.95 * clearance.clamp(0.0, 1.0)
 }
 
 fn update(
@@ -259,7 +259,7 @@ mod tests {
         let middle = fog_density_multiplier(clearance_profile(0.5));
         let edge = fog_density_multiplier(clearance_profile(1.0));
 
-        assert!((center - 0.1).abs() < 1e-6);
+        assert!((center - 0.05).abs() < 1e-6);
         assert!(center < middle && middle < edge);
         assert!((edge - 1.0).abs() < f32::EPSILON);
 
