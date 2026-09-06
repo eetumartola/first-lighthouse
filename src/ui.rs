@@ -329,17 +329,28 @@ fn update_hud(
     }
 }
 
-fn update_rule_card(session: Res<Session>, mut cards: Query<(&mut Visibility, &mut BackgroundColor), With<RuleCard>>) {
+fn update_rule_card(
+    session: Res<Session>,
+    mut cards: Query<(&mut Visibility, &mut BackgroundColor, &Children), With<RuleCard>>,
+    mut texts: Query<&mut TextColor>,
+) {
     let Some(world) = session.world() else { return };
-    // Visible through ignition and the first eight seconds of the night, then fades out.
+    // Visible through ignition and the first moments of the night, then panel and text fade
+    // together so the southern water is clear once the player is sailing.
     let alpha = match world.phase {
         Phase::Intro { .. } => 1.0,
-        Phase::Night => (1.0 - (session.night_seconds - 14.0) / 3.0).clamp(0.0, 1.0),
+        Phase::Night => (1.0 - (session.night_seconds - 8.0) / 3.0).clamp(0.0, 1.0),
         _ => 0.0,
     };
-    for (mut vis, mut bg) in &mut cards {
+    const INKS: [Color; 3] = [WARM, INK, DIM];
+    for (mut vis, mut bg, children) in &mut cards {
         *vis = if alpha > 0.0 { Visibility::Visible } else { Visibility::Hidden };
         bg.0 = PANEL.with_alpha(0.78 * alpha);
+        for (child, ink) in children.iter().zip(INKS) {
+            if let Ok(mut color) = texts.get_mut(child) {
+                color.0 = ink.with_alpha(alpha);
+            }
+        }
     }
 }
 
