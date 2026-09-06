@@ -2,8 +2,8 @@
 //! it. Density is 3D noise scrolled by the wind, multiplied by a clearance field the lighthouse
 //! beam writes into every frame and that closes back over a few seconds. The beam itself lights
 //! the fog (volumetric spot lights), so the parted lane reads as a glowing tunnel in the mist.
-
 use crate::app::{Session, Settings};
+use crate::scene::MainCamera;
 use crate::sim::{Footprint, Phase};
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
@@ -96,10 +96,13 @@ fn cell_sim(x: usize, z: usize) -> glam::Vec2 {
     glam::Vec2::new(u * EXTENT, -w * EXTENT)
 }
 
-/// Select the fog-opening shoulder on the camera-near or camera-far side. The fixed gameplay
-/// camera is south of the sea, so the shoulder whose direction has lower simulation Y is nearer.
-fn camera_side_half_width(bearing: f32, delta: f32, near_half: f32, far_half: f32) -> f32 {
-    let positive_is_near = crate::sim::geom::dir(bearing + far_half).y < crate::sim::geom::dir(bearing - far_half).y;
+/// Select the fog-opening shoulder on the camera-near or camera-far side. Both shoulder
+/// positions are expressed in simulation coordinates so review-camera overrides work too.
+fn camera_side_half_width(bearing: f32, delta: f32, near_half: f32, far_half: f32, camera_sim: glam::Vec2) -> f32 {
+    let positive_shoulder = crate::sim::geom::dir(bearing + far_half);
+    let negative_shoulder = crate::sim::geom::dir(bearing - far_half);
+    let positive_is_near =
+        camera_sim.distance_squared(positive_shoulder) < camera_sim.distance_squared(negative_shoulder);
     if (delta >= 0.0) == positive_is_near {
         near_half
     } else {
@@ -111,6 +114,7 @@ fn update(
     time: Res<Time>,
     session: Res<Session>,
     settings: Res<Settings>,
+    camera: Query<&GlobalTransform, With<MainCamera>>,
     mut state: ResMut<FogState>,
     mut images: ResMut<Assets<Image>>,
     mut volumes: Query<&mut FogVolume, With<SeaFog>>,
@@ -143,6 +147,15 @@ fn update(
         }
         None => (0.0, -1.0, -1.0),
     };
+    // Camera transforms use render coordinates (x east, z south), while beam geometry uses
+    // simulation coordinates (x east, y north).
+    let camera_sim = camera
+        .single()
+        .map(|transform| {
+            let p = transform.translation();
+            glam::Vec2::new(p.x, -p.z)
+        })
+        .unwrap_or(glam::Vec2::new(0.0, -1.0));
     let close = dt / CLOSE_SECONDS;
     for z in 0..N {
         for x in 0..N {
@@ -152,7 +165,7 @@ fn update(
             if near_half > 0.0 && r > 6.0 && r < EXTENT * 0.5 {
                 let point_bearing = crate::sim::geom::bearing_of(p);
                 let d = crate::sim::geom::angle_delta(bearing, point_bearing);
-                let half = camera_side_half_width(bearing, d, near_half, far_half);
+                let half = camera_side_half_width(bearing, d, near_half, far_half, camera_sim);
                 // Broad clear core with feathered shoulders: the spotlight and its water patch
                 // cannot be swallowed by illuminated mist.
                 let u = (d.abs() / half).clamp(0.0, 1.0);
@@ -198,20 +211,33 @@ fn update(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f32::consts::FRAC_PI_2;
+    use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
     #[test]
-    fn fog_opening_is_half_current_width_on_camera_side_and_prior_width_beyond() {
+    fn fog_opening_uses_the_camera_near_shoulder() {
         let beam_half = 0.1;
         let near = beam_half * 4.5;
         let far = beam_half * 9.0;
 
-        // Facing east, the clockwise (positive) shoulder points south toward the camera.
-        assert_eq!(camera_side_half_width(FRAC_PI_2, 0.1, near, far), near);
-        assert_eq!(camera_side_half_width(FRAC_PI_2, -0.1, near, far), far);
-        // Facing west, the counter-clockwise (negative) shoulder points south.
-        assert_eq!(camera_side_half_width(3.0 * FRAC_PI_2, -0.1, near, far), near);
-        assert_eq!(camera_side_half_width(3.0 * FRAC_PI_2, 0.1, near, far), far);
+        // The default camera is south in simulation coordinates. Facing east, the clockwise
+        // (positive) shoulder points south; facing west, the counter-clockwise shoulder does.
+        let south = glam::Vec2::new(0.0, -100.0);
+        assert_eq!(camera_side_half_width(FRAC_PI_2, 0.1, near, far, south), near);
+        assert_eq!(camera_side_half_width(FRAC_PI_2, -0.1, near, far, south), far);
+        assert_eq!(camera_side_half_width(3.0 * FRAC_PI_2, -0.1, near, far, south), near);
+        assert_eq!(camera_side_half_width(3.0 * FRAC_PI_2, 0.1, near, far, south), far);
+
+        // An east-side review camera sees the clockwise shoulder of a north-facing beam first.
+        let east = glam::Vec2::new(100.0, 0.0);
+        assert_eq!(camera_side_half_width(0.0, 0.1, near, far, east), near);
+        assert_eq!(camera_side_half_width(0.0, -0.1, near, far, east), far);
+
+        // A diagonal FIRST_LIGHT_CAMERA override still follows geometric proximity.
+        let diagonal = glam::Vec2::new(100.0, -100.0);
+        assert_eq!(camera_side_half_width(FRAC_PI_4, 0.1, near, far, diagonal), near);
+        assert_eq!(camera_side_half_width(FRAC_PI_4, -0.1, near, far, diagonal), far);
+
+        // The shoulder multipliers remain 4.5x and 9x the beam half-angle.
         assert!((near / (beam_half * 9.0) - 0.5).abs() < f32::EPSILON);
         assert!((far / beam_half - 9.0).abs() < f32::EPSILON);
     }

@@ -29,8 +29,10 @@ pub struct SeaParams {
     /// 1 when the beam's whole length dimly lights the water (Spiral Voyage); 0 otherwise.
     pub beam_lane: f32,
     pub _pad1: f32,
-    /// Per ship: sim x, sim y, heading, 1 when active (0 = unused slot).
+    /// Per ship: interpolated sim x, sim y, heading, 1 when active (0 = unused slot).
     pub ships: [Vec4; WAKE_SHIPS],
+    /// Per ship: deterministic hull bob (x) and roll (y), matching the visible hull pose.
+    pub ship_motion: [Vec4; WAKE_SHIPS],
 }
 
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
@@ -131,6 +133,8 @@ fn update_sea(
     let Some(world) = session.world() else {
         params.fp_kind = 0;
         params.dawn = 0.0;
+        params.ships = [Vec4::ZERO; WAKE_SHIPS];
+        params.ship_motion = [Vec4::ZERO; WAKE_SHIPS];
         if let Some(mut image) = images.get_mut(&handles.charge_image) {
             if let Some(data) = image.data.as_mut() {
                 data.iter_mut().for_each(|b| *b = 0);
@@ -166,8 +170,10 @@ fn update_sea(
     }
     params.dawn = dawn_amount(world);
 
-    // Wakes: active ships at their interpolated poses.
+    // Wakes: active ships at their interpolated poses. Motion is the same deterministic bob and
+    // roll used by the visible hull, kept separate from the pose so ship.w remains an activity bit.
     params.ships = [Vec4::ZERO; WAKE_SHIPS];
+    params.ship_motion = [Vec4::ZERO; WAKE_SHIPS];
     let mut slot = 0;
     for e in &world.sea.entities {
         if slot == WAKE_SHIPS {
@@ -175,7 +181,9 @@ fn update_sea(
         }
         if e.is_active_ship() {
             let (pos, heading) = session.view_pose(e);
+            let (bob, roll) = crate::entities::ship_bob_roll(params.time, e.id);
             params.ships[slot] = Vec4::new(pos.x, pos.y, heading, 1.0);
+            params.ship_motion[slot] = Vec4::new(bob, roll, 0.0, 0.0);
             slot += 1;
         }
     }

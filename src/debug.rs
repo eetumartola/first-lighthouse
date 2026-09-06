@@ -6,6 +6,7 @@ use crate::sim::entity::Target;
 use crate::sim::{self, mutable_sea, Footprint, Form, Rules};
 use bevy::color::palettes::css;
 use bevy::prelude::*;
+use std::collections::VecDeque;
 
 #[derive(Component)]
 struct DebugText;
@@ -15,10 +16,18 @@ pub struct DebugPlugin;
 impl Plugin for DebugPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(KeyScript::from_env())
+            .init_resource::<ScreenshotQueue>()
             .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
             .add_systems(Startup, spawn_text)
             .add_systems(PreUpdate, scripted_keys.after(bevy::input::InputSystems))
-            .add_systems(Update, (draw_overlay, update_text, screenshot_hotkey));
+            .add_systems(
+                Update,
+                (
+                    draw_overlay,
+                    update_text,
+                    screenshot_hotkey.after(bevy::render::view::screenshot::trigger_screenshots),
+                ),
+            );
     }
 }
 
@@ -82,8 +91,15 @@ fn scripted_keys(mut script: ResMut<KeyScript>, time: Res<Time<Real>>, mut input
         script.held.push(key);
     }
 }
+/// Screenshot requests are queued because Bevy captures asynchronously and only one screenshot
+/// may target a given window at a time.
+#[derive(Resource, Default)]
+struct ScreenshotQueue {
+    pending: VecDeque<String>,
+    active: Option<String>,
+}
 
-/// F12 writes `screenshot-N.png` to the working directory. `FIRST_LIGHT_SHOTS=<seconds>` also
+/// F12 writes `screenshot-NNN.png` to the working directory. `FIRST_LIGHT_SHOTS=<seconds>` also
 /// captures one every N seconds (used with the autoplay env var for unattended checks).
 fn screenshot_hotkey(
     mut commands: Commands,
@@ -91,6 +107,7 @@ fn screenshot_hotkey(
     time: Res<Time>,
     mut counter: Local<u32>,
     mut next_auto: Local<Option<f32>>,
+    mut queue: ResMut<ScreenshotQueue>,
 ) {
     let interval = std::env::var("FIRST_LIGHT_SHOTS").ok().and_then(|v| v.parse::<f32>().ok());
     let auto_due = match (interval, *next_auto) {
@@ -104,13 +121,29 @@ fn screenshot_hotkey(
         }
         _ => false,
     };
-    if keys.just_pressed(KeyCode::F12) || auto_due {
-        let path = format!("screenshot-{:03}.png", *counter);
+
+    if keys.just_pressed(KeyCode::F12) {
+        queue.pending.push_back(format!("screenshot-{:03}.png", *counter));
         *counter += 1;
-        commands
-            .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
-            .observe(bevy::render::view::screenshot::save_to_disk(path));
     }
+    if auto_due {
+        queue.pending.push_back(format!("screenshot-{:03}.png", *counter));
+        *counter += 1;
+    }
+
+    if queue.active.is_none() {
+        let Some(path) = queue.pending.pop_front() else { return };
+        queue.active = Some(path);
+        commands.spawn(bevy::render::view::screenshot::Screenshot::primary_window()).observe(screenshot_captured);
+    }
+}
+
+fn screenshot_captured(
+    event: On<bevy::render::view::screenshot::ScreenshotCaptured>,
+    mut queue: ResMut<ScreenshotQueue>,
+) {
+    let Some(path) = queue.active.take() else { return };
+    (bevy::render::view::screenshot::save_to_disk(path))(event);
 }
 
 fn spawn_text(mut commands: Commands) {
@@ -260,10 +293,8 @@ fn update_text(
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
     mut q: Query<(&mut Text, &mut Visibility), With<DebugText>>,
 ) {
-    let fps = diagnostics
-        .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS)
-        .and_then(|d| d.smoothed())
-        .unwrap_or(0.0);
+    let fps =
+        diagnostics.get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
     let frame_ms = diagnostics
         .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FRAME_TIME)
         .and_then(|d| d.smoothed())

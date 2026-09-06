@@ -211,6 +211,12 @@ fn spawn_form(commands: &mut Commands, assets: &FormAssets, form: Form, transfor
 /// unchanged. Doubled from the first pass on playtest feedback.
 const VISUAL_SCALE: f32 = 2.8;
 
+/// Deterministic hull motion shared by ship presentation and water wakes.
+pub(crate) fn ship_bob_roll(time_secs: f32, entity_id: u32) -> (f32, f32) {
+    let phase = entity_id as f32 * 1.7;
+    (0.1 * (time_secs * 1.3 + phase).sin(), 0.05 * (time_secs * 0.9 + phase).sin())
+}
+
 fn heading_transform(pos: glam::Vec2, heading: f32, height: f32) -> Transform {
     let d = to_world(sim::geom::dir(heading));
     Transform::from_translation(to_world_h(pos, height)).looking_to(d, Vec3::Y).with_scale(Vec3::splat(VISUAL_SCALE))
@@ -250,7 +256,10 @@ fn sync_visuals(
         let Ok(mut tf) = transforms.get_mut(visual) else { continue };
         let phase = e.id as f32 * 1.7;
         let (bob, roll, yaw) = match e.form {
-            Form::Ship => (0.1 * (t * 1.3 + phase).sin(), 0.05 * (t * 0.9 + phase).sin(), 0.0),
+            Form::Ship => {
+                let (bob, roll) = ship_bob_roll(t, e.id);
+                (bob, roll, 0.0)
+            }
             Form::Creature => (0.15 * (t * 1.1 + phase).sin() - 0.1, 0.0, 0.12 * (t * 2.2 + phase).sin()),
             Form::Wreck => (0.0, 0.0, 0.0),
             Form::Island => (0.0, 0.0, 0.0),

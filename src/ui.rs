@@ -2,6 +2,7 @@
 
 use crate::app::{AppState, Session, Settings};
 use crate::sim::{self, world_weaver, Mode, Phase, Rules, Status};
+use crate::spiral_widget::beam_world_label;
 use bevy::prelude::*;
 
 const INK: Color = Color::srgb(0.88, 0.86, 0.8);
@@ -337,7 +338,7 @@ fn update_hud(
             )
         }
         Rules::SpiralVoyage(sv) if matches!(world.phase, Phase::Night | Phase::Intro { .. }) => {
-            format!("World {} of {}", sv.beam_world(&world.sea) + 1, sv.worlds.len())
+            beam_world_label(sv, &world.sea)
         }
         _ => String::new(),
     };

@@ -34,8 +34,10 @@ struct SeaParams {
     // 1 = the beam's whole length dimly lights the water (spotlight modes only)
     beam_lane: f32,
     _pad1: f32,
-    // Per ship: sim x, sim y, heading, active flag.
+    // Per ship: interpolated sim x, sim y, heading, active flag.
     ships: array<vec4<f32>, 8>,
+    // Per ship: deterministic hull bob (x) and roll (y), matching the visible hull pose.
+    ship_motion: array<vec4<f32>, 8>,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> sea: SeaParams;
@@ -169,6 +171,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     for (var s = 0u; s < 8u; s = s + 1u) {
         let ship = sea.ships[s];
         if ship.w < 0.5 { continue; }
+        let motion = sea.ship_motion[s];
+        // Hull contact breathes with the same bob and roll as the visible ship. Keep both effects
+        // deliberately small so a wake moves continuously instead of blinking.
+        let contact = clamp(1.0 + motion.x * 0.8 + motion.y * 2.5, 0.76, 1.24);
+        let width_motion = clamp(1.0 + motion.x * 0.45 + motion.y * 4.0, 0.75, 1.25);
+        let dawn_fade = 1.0 - 0.18 * sea.dawn;
         let fwd = vec2<f32>(sin(ship.z), cos(ship.z));
         let d = sim - ship.xy;
         // Hulls are drawn 2.8x their collision size: the stern sits about 4 units behind the
@@ -178,13 +186,13 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         if back < 0.0 || back > 22.0 { continue; }
         // The arms sway a little along the trail so the V reads as water, not a stencil.
         let sway = 0.35 * sin(back * 0.9 - t * 1.6 + ship.x * 0.3);
-        let half_width = 1.8 + back * 0.3 + sway;
+        let half_width = (1.8 + back * 0.3 + sway) * width_motion;
         let fade = 1.0 - back / 22.0;
         // Two arms of the V plus churned water down the middle, dissolving with distance.
         let arms = 1.0 - smoothstep(0.0, 0.8 + back * 0.1, abs(side - half_width));
         let churn = (1.0 - smoothstep(0.0, half_width * 0.7, side)) * 0.45;
         let ripple = 0.7 + 0.3 * sin(back * 1.6 - t * 3.0 + surf_noise * 3.0);
-        wake = max(wake, (arms + churn) * fade * fade * ripple);
+        wake = max(wake, (arms + churn) * fade * fade * ripple * contact * dawn_fade);
     }
     wake = clamp(wake, 0.0, 1.0);
     pbr_input.material.base_color = mix(pbr_input.material.base_color, vec4<f32>(0.5, 0.56, 0.6, 1.0), wake * 0.6);

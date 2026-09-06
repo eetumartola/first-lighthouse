@@ -167,6 +167,36 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
     commands.insert_resource(WidgetMaterials { dim, lit });
 }
 
+/// Single source for Mode 4's presentation readout and spiral highlight.
+///
+/// Entity visibility intentionally uses the ship's world instead; this is only the world the
+/// beam currently inspects.
+pub(crate) fn beam_world(sv: &crate::sim::spiral_voyage::SpiralVoyage, sea: &crate::sim::Sea) -> usize {
+    sv.beam_world(sea)
+}
+
+pub(crate) fn beam_world_label(sv: &crate::sim::spiral_voyage::SpiralVoyage, sea: &crate::sim::Sea) -> String {
+    format!("World {} of {}", beam_world(sv, sea) + 1, sv.worlds.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{beam_world, beam_world_label};
+    use crate::sim::spiral_voyage::winding_in_world;
+    use crate::sim::{Mode, Rules, Tuning, World};
+
+    #[test]
+    fn presentation_selection_follows_beam_while_ship_stays_in_world_one() {
+        let mut world = World::new(Mode::SpiralVoyage, Tuning::default());
+        world.sea.beam.winding = winding_in_world(1, 0.5);
+        let Rules::SpiralVoyage(sv) = &world.rules else { panic!("expected Spiral Voyage") };
+
+        assert_eq!(sv.ship_world(&world.sea), Some(0));
+        assert_eq!(beam_world(sv, &world.sea), 1);
+        assert_eq!(beam_world_label(sv, &world.sea), "World 2 of 4");
+    }
+}
+
 fn update(
     session: Res<Session>,
     mats: Res<WidgetMaterials>,
@@ -196,7 +226,7 @@ fn update(
         cam.viewport = Some(Viewport { physical_position: pos, physical_size: size, ..default() });
     }
 
-    let inspected = sv.beam_world(&world.sea);
+    let inspected = beam_world(sv, &world.sea);
     for (turn, mut material) in &mut turns {
         let want = if turn.0 == inspected { &mats.lit } else { &mats.dim };
         if material.0 != *want {
