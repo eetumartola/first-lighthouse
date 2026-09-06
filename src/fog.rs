@@ -11,9 +11,10 @@ use bevy::light::FogVolume;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-/// Density texture resolution: `N` cells across the sea in x/z, `H` vertically.
-const N: usize = 64;
-const H: usize = 8;
+/// Density texture resolution. Relative to the previous 64 × 8 × 64 grid, these dimensions make
+/// each voxel approximately 1.5 times larger on every axis.
+const N: usize = 43;
+const H: usize = 5;
 /// World extent the density texture spans (render coordinates); matches the fog volume.
 const EXTENT: f32 = 240.0;
 /// Seconds for parted fog to close back to full density.
@@ -110,17 +111,17 @@ fn camera_side_half_width(bearing: f32, delta: f32, near_half: f32, far_half: f3
     }
 }
 
-/// Beam-relative clearance across one angular shoulder. The whole shoulder participates so there
-/// is no clear plateau ending in a short, abrupt fade.
+/// Beam-relative clearance with a clear core wide enough to expose the original surface beam and
+/// a smooth shoulder across the rest of the camera-relative opening.
 fn clearance_profile(u: f32) -> f32 {
-    let u = u.clamp(0.0, 1.0);
-    1.0 - u * u * (3.0 - 2.0 * u)
+    let shoulder = ((u.clamp(0.0, 1.0) - 0.45) / 0.55).clamp(0.0, 1.0);
+    1.0 - shoulder * shoulder * (3.0 - 2.0 * shoulder)
 }
 
-/// Fully parted fog retains five percent of its local density so the illuminated beam still has
-/// mist to reveal; untouched fog remains at full density.
+/// Fully parted fog reaches zero local density exactly on the beam centerline; untouched fog
+/// remains at full density.
 fn fog_density_multiplier(clearance: f32) -> f32 {
-    1.0 - 0.95 * clearance.clamp(0.0, 1.0)
+    1.0 - clearance.clamp(0.0, 1.0)
 }
 
 fn update(
@@ -138,7 +139,7 @@ fn update(
     let (presence, footprint) = match world {
         Some(w) => {
             let p = match w.phase {
-                Phase::Intro { .. } => 1.0 - w.dusk(),
+                Phase::Intro { .. } => (1.0 - w.dusk()).powi(2),
                 Phase::Night => 1.0,
                 Phase::Dawn { .. } => 1.0 - crate::sea::dawn_amount(w),
                 _ => 0.0,
@@ -254,12 +255,13 @@ mod tests {
     }
 
     #[test]
-    fn fog_opening_fades_gradually_and_keeps_center_mist() {
+    fn fog_opening_fades_gradually_from_a_clear_center() {
         let center = fog_density_multiplier(clearance_profile(0.0));
         let middle = fog_density_multiplier(clearance_profile(0.5));
         let edge = fog_density_multiplier(clearance_profile(1.0));
 
-        assert!((center - 0.05).abs() < 1e-6);
+        assert!(center.abs() < f32::EPSILON);
+        assert!(fog_density_multiplier(clearance_profile(0.4)).abs() < f32::EPSILON);
         assert!(center < middle && middle < edge);
         assert!((edge - 1.0).abs() < f32::EPSILON);
 

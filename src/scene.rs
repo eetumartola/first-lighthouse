@@ -37,6 +37,7 @@ struct Flame;
 
 #[derive(Component)]
 struct FogBeam;
+
 #[derive(Component)]
 struct FlameLight;
 
@@ -146,17 +147,17 @@ fn setup_scene(
         Bloom { intensity: 0.22, ..Bloom::NATURAL },
         Exposure { ev100: BASE_EV100 },
         VolumetricFog {
-            // The fog carries its own faint moon-grey so it reads as mist even where no light
-            // shaft crosses it; the beam then parts and lights it.
-            ambient_color: Color::srgb(0.6, 0.7, 0.9),
-            ambient_intensity: 0.0,
+            // A distant moon tint illuminates the fog itself without adding scene light that
+            // would reveal islands.
+            ambient_color: Color::srgb(0.52, 0.62, 0.82),
+            ambient_intensity: 0.25,
             ..default()
         },
         Msaa::Sample4,
     ));
 
-    // Sky light: moon by night, warming and brightening into the sun at first light. It lights
-    // the fog too, so the sea is a pale grey blanket rather than black.
+    // Sky light: moon by night, warming and brightening into the sun at first light. Fog uses the
+    // camera's separate ambient tint so this scene light can remain too faint to reveal islands.
     commands.spawn((
         SkyLight,
         DirectionalLight {
@@ -165,7 +166,6 @@ fn setup_scene(
             shadow_maps_enabled: true,
             ..default()
         },
-        VolumetricLight,
         // The fog is only lit inside the shadow cascade, so it must cover the whole sea.
         bevy::light::CascadeShadowConfigBuilder {
             num_cascades: 2,
@@ -226,7 +226,7 @@ fn setup_scene(
         Transform::from_xyz(0.0, 14.6, 1.6),
     ));
 
-    // Tower beam: the volumetric shaft from the brazier to the footprint.
+    // Tower beam: direct light along the old surface beam, without adding a second fog shaft.
     commands.spawn((
         TowerBeam,
         SpotLight {
@@ -239,11 +239,10 @@ fn setup_scene(
             outer_angle: 0.13,
             ..default()
         },
-        VolumetricLight,
         Transform::from_xyz(0.0, 14.6, 0.0).looking_at(Vec3::new(0.0, 0.0, -50.0), Vec3::Y),
     ));
-    // Fog beam: a wide, very strong spot that exists only to blaze through the mist along the
-    // beam. It carries no shadows and is aimed at the footprint like the shaft.
+    // A faint volumetric halo surrounds the clear surface beam. At 75,000 intensity this is one
+    // quarter of the previously committed 300,000 intensity.
     commands.spawn((
         FogBeam,
         SpotLight {
@@ -251,26 +250,12 @@ fn setup_scene(
             intensity: 0.0,
             range: 200.0,
             shadow_maps_enabled: true,
-            inner_angle: 0.05,
+            inner_angle: 0.0,
             outer_angle: 0.35,
             ..default()
         },
         VolumetricLight,
         Transform::from_xyz(0.0, 14.6, 0.0).looking_at(Vec3::new(0.0, 0.0, -50.0), Vec3::Y),
-    ));
-    // Faint overhead fill keeps the fog readable without competing with the lighthouse beam.
-    commands.spawn((
-        SpotLight {
-            color: Color::srgb(0.52, 0.62, 0.82),
-            intensity: 100_000.0,
-            range: 500.0,
-            shadow_maps_enabled: true,
-            inner_angle: 0.1,
-            outer_angle: 0.42,
-            ..default()
-        },
-        VolumetricLight,
-        Transform::from_xyz(0.0, 380.0, 60.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
     // Footprint light: lights the water and whatever floats inside the patch.
     commands.spawn((
@@ -620,8 +605,8 @@ fn update_beam_lights(
         for (_, mut l) in &mut patch {
             l.intensity = 0.0;
         }
-        for (_, mut l) in &mut fog_beam {
-            l.intensity = 0.0;
+        for (_, mut light) in &mut fog_beam {
+            light.intensity = 0.0;
         }
         return;
     };
@@ -658,8 +643,8 @@ fn update_beam_lights(
             Footprint::Sector { angle_start, angle_end, .. } => (angle_end - angle_start) * 0.5,
         };
         light.outer_angle = half.min(1.2);
-        light.inner_angle = light.outer_angle * 0.3;
-        light.intensity = if shaft_on { 300_000.0 * level } else { 0.0 };
+        light.inner_angle = 0.0;
+        light.intensity = if shaft_on { 75_000.0 * level } else { 0.0 };
     }
 
     for (mut tf, mut light) in &mut patch {
@@ -729,11 +714,13 @@ fn update_exposure(
     mut ambient: ResMut<GlobalAmbientLight>,
 ) {
     let dawn = session.world().map(dawn_amount).unwrap_or(0.0);
-    // Dusk: the sea starts in evening light and fades to darkness as the night begins.
+    // Dusk starts brighter than dawn's matching colour grade, then settles into the established
+    // night exposure. Sunrise keeps the stronger compensation that prevents a white-out.
     let flare = session.world().map(|w| w.dusk()).unwrap_or(0.0);
     let warmth = dawn.max(flare);
+    let exposure_warmth = dawn * 3.6 + flare;
     for mut e in &mut cams {
-        e.ev100 = BASE_EV100 - settings.brightness + warmth * 3.6;
+        e.ev100 = BASE_EV100 - settings.brightness + exposure_warmth;
     }
     // Both transitions pass through the same sunset: amber low on the horizon, the sky violet.
     // `warmth` is how far into daylight either transition is (dusk runs it backwards).
@@ -757,10 +744,11 @@ fn update_exposure(
         let pos = from.lerp(to, warmth);
         *tf = Transform::from_translation(pos).looking_at(Vec3::ZERO, Vec3::Y);
     }
-    // Ambient: violet at the sunset edge, cool blue by night, so the warm sun reads as direction.
+    // Dusk needs stronger ambient fill than sunrise: the opening should clearly reveal the sea,
+    // ships and islands before they disappear into night.
     let violet = LinearRgba::new(0.75, 0.45, 0.85, 1.0);
     let cool = LinearRgba::new(0.5, 0.65, 0.9, 1.0);
-    ambient.brightness = 2.6 + warmth * 200.0;
+    ambient.brightness = 2.6 + dawn * 200.0 + flare * 800.0;
     ambient.color = Color::LinearRgba(cool.mix(&violet, (warmth * 2.5).min(1.0) * (1.0 - warmth * 0.5)));
     // The star dome flushes with the sunset, then settles to a deep blue-grey in daylight so the
     // sea's rim still reads.
