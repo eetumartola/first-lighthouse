@@ -419,11 +419,17 @@ impl World {
         self.night_length.map(|len| (len - self.night_elapsed).max(0.0))
     }
 
-    /// Developer shortcut: end the night on the next step (modes with a deadline).
+    /// Developer shortcut: end the night on the next step. Modes without a deadline (Spiral
+    /// Voyage) go straight to dawn, which resolves the voyage as unfinished.
     pub fn skip_to_dawn(&mut self) {
-        if self.phase == Phase::Night {
-            if let Some(len) = self.night_length {
-                self.night_elapsed = len;
+        if self.phase != Phase::Night {
+            return;
+        }
+        match self.night_length {
+            Some(len) => self.night_elapsed = len,
+            None => {
+                self.phase = Phase::Dawn { elapsed: 0.0 };
+                self.sea.events.push(Event::Dawn);
             }
         }
     }
