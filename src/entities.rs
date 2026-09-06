@@ -192,6 +192,22 @@ fn spawn_form(commands: &mut Commands, assets: &FormAssets, form: Form, transfor
             ChildOf(parent),
         ));
     }
+    if form == Form::Ship {
+        // The masthead lantern lights its own deck and the water alongside, so a ship in the beam
+        // reads as a warm working boat rather than a black cut-out. Hidden with the lit parts.
+        commands.spawn((
+            LitPart,
+            PointLight {
+                color: Color::srgb(1.0, 0.72, 0.42),
+                intensity: 9_000.0,
+                range: 16.0,
+                shadow_maps_enabled: false,
+                ..default()
+            },
+            Transform::from_xyz(0.0, 4.15, -0.55),
+            ChildOf(parent),
+        ));
+    }
     parent
 }
 
@@ -230,7 +246,8 @@ fn sync_visuals(
                 if let Some((old, _)) = other {
                     commands.entity(old).despawn();
                 }
-                let ent = spawn_form(&mut commands, &assets, e.form, heading_transform(e.pos, e.heading, 0.0));
+                let (pos, heading) = session.view_pose(e);
+                let ent = spawn_form(&mut commands, &assets, e.form, heading_transform(pos, heading, 0.0));
                 commands.entity(ent).insert(Visual { id: e.id });
                 visuals.map.insert(e.id, (ent, e.form));
                 ent
@@ -244,7 +261,8 @@ fn sync_visuals(
             Form::Wreck => (0.0, 0.0, 0.0),
             Form::Island => (0.0, 0.0, 0.0),
         };
-        let base = heading_transform(e.pos, e.heading + yaw, bob);
+        let (pos, heading) = session.view_pose(e);
+        let base = heading_transform(pos, heading + yaw, bob);
         let mut rotation = base.rotation * Quat::from_rotation_z(roll);
         let mut scale = Vec3::splat(VISUAL_SCALE);
         // Mutable Sea: a form becoming unstable shudders when inspected.

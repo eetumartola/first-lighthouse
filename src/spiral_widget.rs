@@ -202,7 +202,7 @@ fn update(
         }
     }
     for mut tf in &mut beam_bead {
-        tf.translation = on_surface(world.sea.beam.winding, RADIUS * 0.9);
+        tf.translation = on_surface(session.view_beam().map_or(world.sea.beam.winding, |b| b.winding), RADIUS * 0.9);
     }
     let ship = sv.ship.and_then(|id| world.sea.entity(id));
     for (mut tf, mut vis) in &mut ship_bead {

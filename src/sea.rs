@@ -143,7 +143,7 @@ fn update_sea(
     // whole length dimly; the bright footprint alone charges plankton.
     params.beam_lane = if matches!(world.rules, crate::sim::Rules::SpiralVoyage(_)) { 1.0 } else { 0.0 };
     if world.beam_active() {
-        match world.footprint() {
+        match session.view_footprint().unwrap_or_else(|| world.footprint()) {
             Footprint::Spot {
                 bearing,
                 half_angle,

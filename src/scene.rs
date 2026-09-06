@@ -91,8 +91,24 @@ fn setup_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let t = sim::Tuning::default();
+
+    // Night sky: a dome of scattered stars over a faint horizon glow, unlit so exposure never
+    // swallows it. Dawn brightens the world, not the sky texture.
+    commands.spawn((
+        Mesh3d(meshes.add(Sphere::new(1400.0).mesh().uv(48, 24))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color_texture: Some(images.add(sky_image())),
+            unlit: true,
+            cull_mode: None,
+            ..default()
+        })),
+        Transform::from_xyz(0.0, -60.0, 0.0),
+        Name::new("Sky"),
+    ));
+
 
     // Rock takes its tone from vertex colours (dark wet base, pale dry tops); the tower is
     // plain slate.
@@ -348,6 +364,51 @@ fn setup_scene(
     });
 }
 
+/// Equirectangular star field: dense faint stars, a few bright ones, and a cold glow band just
+/// above the horizon.
+fn sky_image() -> Image {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::image::ImageSampler;
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    let (w, h) = (2048usize, 1024usize);
+    let mut data = vec![0u8; w * h * 4];
+    let hash = |x: u32, y: u32| -> f32 {
+        let mut n = x.wrapping_mul(374761393).wrapping_add(y.wrapping_mul(668265263)) ^ 0x9E37_79B9;
+        n = (n ^ (n >> 13)).wrapping_mul(1274126177);
+        ((n ^ (n >> 16)) & 0xFFFF) as f32 / 65535.0
+    };
+    for y in 0..h {
+        // v: 0 at the top of the dome, 0.5 at the horizon.
+        let v = y as f32 / h as f32;
+        let above = (0.5 - v).max(0.0) * 2.0;
+        let glow = (1.0 - above * 3.0).clamp(0.0, 1.0).powi(2);
+        for x in 0..w {
+            let mut c = [0.010 + 0.035 * glow, 0.014 + 0.045 * glow, 0.028 + 0.075 * glow];
+            if above > 0.02 {
+                let r = hash(x as u32, y as u32);
+                if r > 0.9975 {
+                    let b = 0.25 + 0.6 * hash(y as u32, x as u32);
+                    c = [b, b * 0.98, b * 0.9];
+                }
+            }
+            let i = (y * w + x) * 4;
+            for k in 0..3 {
+                data[i + k] = (c[k].clamp(0.0, 1.0) * 255.0) as u8;
+            }
+            data[i + 3] = 255;
+        }
+    }
+    let mut image = Image::new(
+        Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::linear();
+    image
+}
+
 
 fn review_camera() -> Option<Transform> {
     let spec = std::env::var("FIRST_LIGHT_CAMERA").ok()?;
@@ -522,7 +583,7 @@ fn update_beam_lights(
         return;
     };
     let t = world.tuning();
-    let fp = world.footprint();
+    let fp = session.view_footprint().unwrap_or_else(|| world.footprint());
     let center = fp.center();
     let level = beacon_level(world);
     let shaft_on = matches!(world.phase, Phase::Night | Phase::Intro { .. });
@@ -581,7 +642,7 @@ fn update_lighthouse(
     mut reflector: Query<&mut Transform, (With<Reflector>, Without<Flame>)>,
 ) {
     let (level, bearing) = match session.world() {
-        Some(w) => (beacon_level(w), w.sea.beam.bearing()),
+        Some(w) => (beacon_level(w), session.view_beam().map_or(w.sea.beam.bearing(), |b| b.bearing())),
         None => (0.0, time.elapsed_secs() * 0.15),
     };
     let flicker = 1.0 + 0.08 * (time.elapsed_secs() * 17.0).sin() + 0.05 * (time.elapsed_secs() * 29.0).sin();
@@ -656,14 +717,24 @@ fn update_weaver_markers(
     }
 }
 
-/// Spiral Voyage: a rock shows when, seen from the ship, its position lies in its world. The
-/// seam therefore never changes appearance; the worlds only differ at the ship's antipode.
-fn update_world_rocks(session: Res<Session>, mut rocks: Query<(&WorldRocks, &mut Visibility)>) {
+/// Spiral Voyage: an island shows when, seen from the ship, its position lies in its world. The
+/// seam therefore never changes appearance; the worlds only differ opposite the ship, where the
+/// outgoing world's islands sink into the sea and the incoming world's rise over a short arc
+/// instead of popping.
+fn update_world_rocks(session: Res<Session>, mut rocks: Query<(&WorldRocks, &mut Visibility, &mut Transform)>) {
     let Some(world) = session.world() else { return };
     let Rules::SpiralVoyage(sv) = &world.rules else { return };
     let view = sv.perspective(&world.sea);
-    for (rock, mut vis) in &mut rocks {
-        *vis = if view.world_at(rock.center) == rock.world { Visibility::Visible } else { Visibility::Hidden };
+    let antipode = view.bearing + std::f32::consts::PI;
+    const FADE_ARC: f32 = 12.0 * std::f32::consts::PI / 180.0;
+    for (rock, mut vis, mut tf) in &mut rocks {
+        let shown = view.world_at(rock.center) == rock.world;
+        *vis = if shown { Visibility::Visible } else { Visibility::Hidden };
+        if shown {
+            let off = sim::geom::angle_delta(antipode, sim::geom::bearing_of(rock.center)).abs();
+            let rise = (off / FADE_ARC).clamp(0.0, 1.0);
+            tf.scale.y = (rise * rise * (3.0 - 2.0 * rise)).max(0.01);
+        }
     }
 }
 

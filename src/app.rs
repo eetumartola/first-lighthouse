@@ -40,6 +40,25 @@ impl Default for Settings {
     }
 }
 
+/// Beam and entity poses before the latest fixed step, so presentation can interpolate between
+/// steps instead of showing 60 Hz motion on a faster display.
+#[derive(Default)]
+struct Snapshot {
+    beam_bearing: f32,
+    beam_range: f32,
+    entities: std::collections::HashMap<sim::EntityId, (glam::Vec2, f32)>,
+}
+
+impl Snapshot {
+    fn of(world: &sim::World) -> Self {
+        Self {
+            beam_bearing: world.sea.beam.bearing(),
+            beam_range: world.sea.beam.range,
+            entities: world.sea.entities.iter().map(|e| (e.id, (e.pos, e.heading))).collect(),
+        }
+    }
+}
+
 #[derive(Resource, Default)]
 pub struct Session {
     pub world: Option<sim::World>,
@@ -55,6 +74,9 @@ pub struct Session {
     pub night_seconds: f32,
     /// Scripted keeper for the current scenario (developer autopilot).
     keeper: Option<sim::autopilot::Keeper>,
+    prev: Snapshot,
+    /// Fraction of the way from the previous fixed step to the next, refreshed every frame.
+    alpha: f32,
 }
 
 impl Session {
@@ -70,6 +92,34 @@ impl Session {
         self.capture_pending = false;
         self.events.clear();
         self.night_seconds = 0.0;
+        self.prev = Snapshot::default();
+        if let Some(world) = &self.world {
+            self.prev = Snapshot::of(world);
+        }
+    }
+
+    /// An entity's pose interpolated between the previous fixed step and the current one.
+    pub fn view_pose(&self, e: &sim::Entity) -> (glam::Vec2, f32) {
+        let alpha = self.alpha;
+        match self.prev.entities.get(&e.id) {
+            Some(&(pos, heading)) => (pos.lerp(e.pos, alpha), heading + sim::geom::angle_delta(heading, e.heading) * alpha),
+            None => (e.pos, e.heading),
+        }
+    }
+
+    /// The beam as it should be drawn this frame: bearing and range interpolated, winding kept on
+    /// the current step's turn so revolution-based readings stay exact.
+    pub fn view_beam(&self) -> Option<sim::Beam> {
+        let world = self.world()?;
+        let alpha = self.alpha;
+        let mut beam = world.sea.beam.clone();
+        beam.winding -= sim::geom::angle_delta(self.prev.beam_bearing, beam.bearing()) * (1.0 - alpha);
+        beam.range = self.prev.beam_range + (beam.range - self.prev.beam_range) * alpha;
+        Some(beam)
+    }
+
+    pub fn view_footprint(&self) -> Option<sim::Footprint> {
+        Some(self.view_beam()?.footprint(self.world()?.tuning()))
     }
 }
 
@@ -96,6 +146,10 @@ impl Plugin for AppPlugin {
             .add_systems(Update, gather_capture.run_if(in_state(AppState::Playing)))
             .add_systems(FixedUpdate, step_simulation.run_if(in_state(AppState::Playing)))
             .add_systems(
+                RunFixedMainLoop,
+                refresh_alpha.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop),
+            )
+            .add_systems(
                 Update,
                 (pause_input, finish_when_done).run_if(in_state(AppState::Playing)),
             )
@@ -107,6 +161,12 @@ impl Plugin for AppPlugin {
 
 fn clear_events(mut session: ResMut<Session>) {
     session.events.clear();
+}
+
+/// Interpolation fraction for this frame; frozen at the current step while the simulation is
+/// not running so paused scenes hold still.
+fn refresh_alpha(state: Res<State<AppState>>, fixed: Res<Time<Fixed>>, mut session: ResMut<Session>) {
+    session.alpha = if *state.get() == AppState::Playing { fixed.overstep_fraction() } else { 1.0 };
 }
 
 fn global_hotkeys(keys: Res<ButtonInput<KeyCode>>, mut settings: ResMut<Settings>, mut session: ResMut<Session>) {
@@ -169,8 +229,9 @@ fn step_simulation(
 ) {
     let capture = std::mem::take(&mut session.capture_pending);
     let dt = time.delta_secs();
-    let Session { world, keeper, .. } = &mut *session;
+    let Session { world, keeper, prev, .. } = &mut *session;
     let Some(world) = world.as_mut() else { return };
+    *prev = Snapshot::of(world);
     let axis = |neg: &[KeyCode], pos: &[KeyCode]| -> f32 {
         let n = neg.iter().any(|k| keys.pressed(*k));
         let p = pos.iter().any(|k| keys.pressed(*k));
