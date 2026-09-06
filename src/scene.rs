@@ -259,6 +259,21 @@ fn setup_scene(
         VolumetricLight,
         Transform::from_xyz(0.0, 14.6, 0.0).looking_at(Vec3::new(0.0, 0.0, -50.0), Vec3::Y),
     ));
+    // Distant moon: a wide, faint overhead fill. It is what makes hulls and the creature read at
+    // all outside the beam and, being volumetric, what lets the fog's slow billows show.
+    commands.spawn((
+        SpotLight {
+            color: Color::srgb(0.52, 0.62, 0.82),
+            intensity: 100_000.0,
+            range: 500.0,
+            shadow_maps_enabled: true,
+            inner_angle: 0.1,
+            outer_angle: 0.42,
+            ..default()
+        },
+        VolumetricLight,
+        Transform::from_xyz(0.0, 380.0, 60.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
     // Footprint light: lights the water and whatever floats inside the patch.
     commands.spawn((
         FootprintLight,
@@ -647,7 +662,8 @@ fn update_beam_lights(
         };
         light.outer_angle = half.min(1.2);
         light.inner_angle = 0.0;
-        light.intensity = if shaft_on { 75_000.0 * level } else { 0.0 };
+        // Scaled against the volume's tripled light multiplier, so the halo looks as it did.
+        light.intensity = if shaft_on { 2_700.0 * level } else { 0.0 };
     }
 
     for (mut tf, mut light) in &mut patch {

@@ -81,7 +81,10 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             absorption: 0.05,
             scattering: 0.9,
             scattering_asymmetry: 0.3,
-            light_intensity: 600.0,
+            // The fog carries a quarter of its old density, so every light that reaches it is
+            // worth three times as much: the moon's slow billows read again without thickening
+            // the mist. Per-light strengths are scaled down to match where they were already set.
+            light_intensity: 18_000.0,
             fog_color: Color::srgb(0.75, 0.85, 1.0),
             ..default()
         },
@@ -154,7 +157,7 @@ fn update(
     // Clearance: the beam's whole lane parts the fog where it lights the water; everywhere it does
     // not, the fog closes back.
     let (bearing, near_half, far_half) = match footprint {
-        Some(Footprint::Spot { bearing, half_angle, .. }) => (bearing, half_angle * 4.5, half_angle * 9.0),
+        Some(Footprint::Spot { bearing, half_angle, .. }) => (bearing, half_angle * 2.25, half_angle * 4.5),
         Some(Footprint::Sector { angle_start, angle_end, .. }) => {
             let half = (angle_end - angle_start) * 0.5;
             ((angle_start + angle_end) * 0.5, half, half)
@@ -189,11 +192,11 @@ fn update(
         }
     }
 
-    // Noise evolves slowly in place and drifts from the north-west toward the south-east. The
-    // slab fades to nothing at its borders so the volume's box never shows.
+    // The bank rolls from the north-west toward the south-east while each octave also walks along
+    // its own fourth axis, so the shapes billow slowly instead of sliding rigidly across the sea.
     let t = time.elapsed_secs();
-    let drift = Vec3::new(1.0, 0.0, 1.0) * (t * 0.09);
-    let evolve = t * 0.03;
+    let drift = Vec3::new(1.0, 0.0, 1.0) * (t * 0.2);
+    let billow = t * 0.16;
     if let Some(mut image) = images.get_mut(&state.image) {
         if let Some(data) = image.data.as_mut() {
             for z in 0..N {
@@ -202,9 +205,12 @@ fn update(
                     let height = 1.0 - ((y as f32 + 0.5) / H as f32).powi(2);
                     for x in 0..N {
                         let p = Vec3::new(x as f32, y as f32 * 2.0, z as f32) - drift;
-                        let a = value_noise(p / 9.0 + Vec3::new(0.0, evolve, 0.0));
-                        let b = value_noise(p / 4.0 + Vec3::new(17.3, evolve * 1.7, 5.1));
-                        let n = ((0.65 * a + 0.35 * b - 0.2) * 1.8).clamp(0.0, 1.0) * height;
+                        // Three octaves: massing, structure, and a fine edge just above the
+                        // texture's own cell size, each evolving at its own pace.
+                        let a = value_noise(p / 9.0 + Vec3::new(0.0, billow, 0.0));
+                        let b = value_noise(p / 4.0 + Vec3::new(17.3, billow * 1.9, 5.1));
+                        let c = value_noise(p / 2.2 + Vec3::new(5.7, billow * 3.1, 11.2));
+                        let n = ((0.5 * a + 0.32 * b + 0.18 * c - 0.2) * 1.8).clamp(0.0, 1.0) * height;
                         // Fade out beyond the playable sea so the slab's box never shows.
                         let radius = cell_sim(x, z).length();
                         let edge = 1.0 - ((radius - 78.0) / 32.0).clamp(0.0, 1.0);

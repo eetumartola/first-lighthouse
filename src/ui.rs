@@ -426,11 +426,11 @@ fn update_rule_card(
     mut texts: Query<&mut TextColor>,
 ) {
     let Some(world) = session.world() else { return };
-    // Visible through ignition and the first moments of the night, then panel and text fade
-    // together so the southern water is clear once the player is sailing.
+    // Visible through ignition; once the sun is down the panel and its text fade together over
+    // two seconds, so the southern water is clear as soon as the sailing starts.
     let alpha = match world.phase {
         Phase::Intro { .. } => 1.0,
-        Phase::Night => (1.0 - (session.night_seconds - 8.0) / 3.0).clamp(0.0, 1.0),
+        Phase::Night => (1.0 - session.night_seconds / 2.0).clamp(0.0, 1.0),
         _ => 0.0,
     };
     const INKS: [Color; 2] = [WARM, INK];
