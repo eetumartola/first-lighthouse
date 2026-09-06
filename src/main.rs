@@ -5,6 +5,7 @@ mod audio;
 mod debug;
 mod entities;
 mod labels;
+mod models;
 mod scene;
 mod sea;
 mod sim;

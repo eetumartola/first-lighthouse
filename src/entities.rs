@@ -2,11 +2,11 @@
 //! island, shown only where the simulation's visibility rules allow.
 
 use crate::app::{to_world, to_world_h, Session, Settings};
+use crate::models;
 use crate::scene::SessionScoped;
 use crate::sim::{self, mutable_sea, EntityId, Form, Visibility as SimVis};
 use bevy::prelude::*;
 use std::collections::HashMap;
-use std::f32::consts::FRAC_PI_4;
 
 /// Silhouette clarity is quantised into this many alpha levels (one material each).
 const SILHOUETTE_LEVELS: usize = 6;
@@ -14,18 +14,17 @@ const SILHOUETTE_LEVELS: usize = 6;
 #[derive(Resource)]
 pub struct FormAssets {
     hull: Handle<Mesh>,
-    prow: Handle<Mesh>,
-    cabin: Handle<Mesh>,
+    windows: Handle<Mesh>,
     mast: Handle<Mesh>,
+    boom: Handle<Mesh>,
     broken_mast: Handle<Mesh>,
     lantern: Handle<Mesh>,
     body: Handle<Mesh>,
-    crest: Handle<Mesh>,
     eye: Handle<Mesh>,
     mound: Handle<Mesh>,
-    ridge: Handle<Mesh>,
-    wood: Handle<StandardMaterial>,
+    paint: Handle<StandardMaterial>,
     dark_wood: Handle<StandardMaterial>,
+    window_glow: Handle<StandardMaterial>,
     lantern_glow: Handle<StandardMaterial>,
     creature: Handle<StandardMaterial>,
     eye_glow: Handle<StandardMaterial>,
@@ -73,28 +72,30 @@ fn setup_assets(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     commands.insert_resource(FormAssets {
-        hull: meshes.add(Cuboid::new(1.4, 0.7, 3.0)),
-        prow: meshes.add(Cuboid::new(1.0, 0.7, 1.0)),
-        cabin: meshes.add(Cuboid::new(0.9, 0.55, 1.0)),
-        mast: meshes.add(Cylinder::new(0.11, 3.6)),
-        broken_mast: meshes.add(Cylinder::new(0.11, 1.5)),
-        lantern: meshes.add(Sphere::new(0.32)),
-        body: meshes.add(Capsule3d::new(0.7, 2.4)),
-        crest: meshes.add(Cone {
-            radius: 0.5,
-            height: 1.6,
-        }),
+        hull: meshes.add(models::ship()),
+        windows: meshes.add(models::wheelhouse_windows()),
+        mast: meshes.add(Cylinder::new(0.09, 3.4)),
+        boom: meshes.add(Cylinder::new(0.05, 1.6)),
+        broken_mast: meshes.add(Cylinder::new(0.09, 1.5)),
+        lantern: meshes.add(Sphere::new(0.28)),
+        body: meshes.add(models::serpent()),
         eye: meshes.add(Sphere::new(0.11)),
-        mound: meshes.add(Sphere::new(3.0)),
-        ridge: meshes.add(Cuboid::new(1.6, 1.4, 1.6)),
-        wood: materials.add(StandardMaterial {
-            base_color: Color::srgb(0.42, 0.28, 0.17),
-            perceptual_roughness: 0.8,
+        mound: meshes.add(models::island(&[sim::Circle::new(glam::Vec2::ZERO, 3.0)], glam::Vec2::ZERO, None)),
+        paint: materials.add(StandardMaterial {
+            // Hull tones come from the mesh's face colours.
+            base_color: Color::WHITE,
+            perceptual_roughness: 0.75,
             ..default()
         }),
         dark_wood: materials.add(StandardMaterial {
             base_color: Color::srgb(0.16, 0.11, 0.08),
             perceptual_roughness: 0.95,
+            ..default()
+        }),
+        window_glow: materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.8, 0.5),
+            emissive: LinearRgba::new(2.5, 1.5, 0.5, 1.0),
+            unlit: true,
             ..default()
         }),
         lantern_glow: materials.add(StandardMaterial {
@@ -116,8 +117,8 @@ fn setup_assets(
             ..default()
         }),
         stone: materials.add(StandardMaterial {
-            base_color: Color::srgb(0.33, 0.32, 0.29),
-            perceptual_roughness: 0.95,
+            base_color: Color::WHITE,
+            perceptual_roughness: 0.92,
             ..default()
         }),
         silhouettes: (0..SILHOUETTE_LEVELS)
@@ -134,28 +135,26 @@ fn setup_assets(
     });
 }
 
-/// (mesh, lit material, local transform) for each part of a form. Parts reuse the same prow
-/// wedge, mast/crest and hull proportions so the forms read as one myth.
+/// (mesh, lit material, local transform) for each part of a form. Ships and wrecks share one
+/// hull; the creature is the same scale so a surfacing back rhymes with a hull.
 fn parts(assets: &FormAssets, form: Form) -> Vec<(Handle<Mesh>, Handle<StandardMaterial>, Transform)> {
-    let wedge = Quat::from_rotation_y(FRAC_PI_4);
     match form {
         Form::Ship => vec![
-            (assets.hull.clone(), assets.wood.clone(), Transform::from_xyz(0.0, 0.35, 0.0)),
-            (assets.prow.clone(), assets.wood.clone(), Transform::from_xyz(0.0, 0.35, -1.75).with_rotation(wedge)),
-            (assets.cabin.clone(), assets.dark_wood.clone(), Transform::from_xyz(0.0, 0.95, 0.75)),
-            (assets.mast.clone(), assets.dark_wood.clone(), Transform::from_xyz(0.0, 2.3, -0.2)),
-            (assets.lantern.clone(), assets.lantern_glow.clone(), Transform::from_xyz(0.0, 4.25, -0.2)),
+            (assets.hull.clone(), assets.paint.clone(), Transform::IDENTITY),
+            (assets.windows.clone(), assets.window_glow.clone(), Transform::IDENTITY),
+            (assets.mast.clone(), assets.dark_wood.clone(), Transform::from_xyz(0.0, 2.3, -0.55)),
+            (
+                assets.boom.clone(),
+                assets.dark_wood.clone(),
+                Transform::from_xyz(0.0, 2.9, 0.15).with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2 * 0.92)),
+            ),
+            (assets.lantern.clone(), assets.lantern_glow.clone(), Transform::from_xyz(0.0, 4.15, -0.55)),
         ],
         Form::Wreck => vec![
             (
                 assets.hull.clone(),
                 assets.dark_wood.clone(),
-                Transform::from_xyz(0.0, -0.05, 0.2).with_rotation(Quat::from_rotation_z(0.42) * Quat::from_rotation_x(0.12)),
-            ),
-            (
-                assets.prow.clone(),
-                assets.dark_wood.clone(),
-                Transform::from_xyz(0.35, 0.05, -1.6).with_rotation(Quat::from_rotation_z(0.5) * wedge),
+                Transform::from_xyz(0.0, -0.25, 0.2).with_rotation(Quat::from_rotation_z(0.42) * Quat::from_rotation_x(0.12)),
             ),
             (
                 assets.broken_mast.clone(),
@@ -164,21 +163,11 @@ fn parts(assets: &FormAssets, form: Form) -> Vec<(Handle<Mesh>, Handle<StandardM
             ),
         ],
         Form::Creature => vec![
-            (
-                assets.body.clone(),
-                assets.creature.clone(),
-                Transform::from_xyz(0.0, 0.05, 0.1).with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-            ),
-            (assets.prow.clone(), assets.creature.clone(), Transform::from_xyz(0.0, 0.3, -1.9).with_rotation(wedge).with_scale(Vec3::new(0.9, 0.8, 0.9))),
-            (assets.crest.clone(), assets.creature.clone(), Transform::from_xyz(0.0, 1.15, 0.3)),
-            (assets.eye.clone(), assets.eye_glow.clone(), Transform::from_xyz(-0.32, 0.6, -2.15)),
-            (assets.eye.clone(), assets.eye_glow.clone(), Transform::from_xyz(0.32, 0.6, -2.15)),
+            (assets.body.clone(), assets.creature.clone(), Transform::IDENTITY),
+            (assets.eye.clone(), assets.eye_glow.clone(), Transform::from_xyz(-0.3, 0.42, -3.0)),
+            (assets.eye.clone(), assets.eye_glow.clone(), Transform::from_xyz(0.3, 0.42, -3.0)),
         ],
-        Form::Island => vec![
-            (assets.mound.clone(), assets.stone.clone(), Transform::from_xyz(0.0, -0.9, 0.0).with_scale(Vec3::new(1.0, 0.55, 1.0))),
-            (assets.ridge.clone(), assets.stone.clone(), Transform::from_xyz(0.0, 0.7, -0.8).with_rotation(wedge)),
-            (assets.crest.clone(), assets.stone.clone(), Transform::from_xyz(0.0, 1.3, 0.6).with_scale(Vec3::new(1.3, 1.1, 1.3))),
-        ],
+        Form::Island => vec![(assets.mound.clone(), assets.stone.clone(), Transform::IDENTITY)],
     }
 }
 

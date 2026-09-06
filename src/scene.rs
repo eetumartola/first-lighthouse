@@ -2,6 +2,7 @@
 
 use crate::app::{to_world, to_world_h, Session, Settings};
 use crate::sea::dawn_amount;
+use crate::models;
 use crate::sim::{self, world_weaver, Footprint, Phase, Rules};
 use bevy::camera::Exposure;
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -54,7 +55,6 @@ struct SceneState {
 /// Shared materials for static geometry.
 #[derive(Resource)]
 pub struct SceneMaterials {
-    pub stone: Handle<StandardMaterial>,
     pub dark_stone: Handle<StandardMaterial>,
     pub warm_glow: Handle<StandardMaterial>,
 }
@@ -94,14 +94,16 @@ fn setup_scene(
 ) {
     let t = sim::Tuning::default();
 
+    // Rock takes its tone from vertex colours (dark wet base, pale dry tops); the tower is
+    // plain slate.
     let stone = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.36, 0.34, 0.31),
-        perceptual_roughness: 0.95,
+        base_color: Color::srgb(0.30, 0.31, 0.32),
+        perceptual_roughness: 0.92,
         ..default()
     });
     let dark_stone = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.2, 0.2, 0.19),
-        perceptual_roughness: 0.98,
+        base_color: Color::WHITE,
+        perceptual_roughness: 0.95,
         ..default()
     });
     let bronze = materials.add(StandardMaterial {
@@ -126,7 +128,10 @@ fn setup_scene(
             ..default()
         }),
         // Framed so the full sea disc (radius 100) fits vertically with room for the bottom HUD.
-        Transform::from_xyz(0.0, 225.0, 125.0).looking_at(Vec3::new(0.0, 0.0, 14.0), Vec3::Y),
+        // `FIRST_LIGHT_CAMERA=x,y,z,tx,ty,tz` (render coordinates) overrides it for model review.
+        review_camera().unwrap_or_else(|| {
+            Transform::from_xyz(0.0, 225.0, 125.0).looking_at(Vec3::new(0.0, 0.0, 14.0), Vec3::Y)
+        }),
         Tonemapping::TonyMcMapface,
         Bloom {
             intensity: 0.22,
@@ -168,31 +173,19 @@ fn setup_scene(
         Transform::from_xyz(-60.0, 120.0, -40.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
-    // Central island and lighthouse: stone platform, brazier, bronze reflector.
-    let island_mesh = meshes.add(Cone {
-        radius: t.island_radius,
-        height: 2.2,
-    });
+    // Central island and lighthouse: a flat-topped crag, an octagonal stone tower, brazier and
+    // bronze reflector.
+    let island_mesh = meshes.add(models::island(&[sim::Circle::new(Vec2::ZERO, t.island_radius)], Vec2::ZERO, Some(2.0)));
     commands.spawn((
         Mesh3d(island_mesh),
         MeshMaterial3d(dark_stone.clone()),
-        Transform::from_xyz(0.0, 1.1, 0.0).with_scale(Vec3::new(1.0, 1.0, 1.0)),
+        Transform::IDENTITY,
         Name::new("Island"),
     ));
     commands.spawn((
-        Mesh3d(meshes.add(Cylinder::new(t.island_radius * 0.8, 1.6))),
+        Mesh3d(meshes.add(models::tower(&[(3.6, 1.4), (2.6, 0.8), (2.1, 4.2), (1.8, 5.0), (2.5, 0.5)], 8))),
         MeshMaterial3d(stone.clone()),
-        Transform::from_xyz(0.0, 0.8, 0.0),
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(Cylinder::new(3.2, 1.2))),
-        MeshMaterial3d(stone.clone()),
-        Transform::from_xyz(0.0, 2.2, 0.0),
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(Cylinder::new(1.7, 10.0))),
-        MeshMaterial3d(stone.clone()),
-        Transform::from_xyz(0.0, 7.8, 0.0),
+        Transform::from_xyz(0.0, 1.4, 0.0),
         Name::new("Tower"),
     ));
     commands.spawn((
@@ -350,12 +343,18 @@ fn setup_scene(
     }
 
     commands.insert_resource(SceneMaterials {
-        stone,
         dark_stone,
         warm_glow,
     });
 }
 
+
+fn review_camera() -> Option<Transform> {
+    let spec = std::env::var("FIRST_LIGHT_CAMERA").ok()?;
+    let v: Vec<f32> = spec.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+    let [x, y, z, tx, ty, tz] = v[..] else { return None };
+    Some(Transform::from_xyz(x, y, z).looking_at(Vec3::new(tx, ty, tz), Vec3::Y))
+}
 /// Rebuild the per-session geometry (rocks, World Weaver ring and buoys) when a session starts.
 fn sync_session_scene(
     mut commands: Commands,
@@ -376,10 +375,9 @@ fn sync_session_scene(
     let Some(world) = session.world() else { return };
     let t = world.tuning();
 
-    // Fixed rocks (skip index 0: the central island is drawn by the fixed scene).
-    for rock in world.sea.rocks.iter().skip(1) {
-        let parent = spawn_rock(&mut commands, &mut meshes, &mats, *rock);
-        commands.entity(parent).insert(SessionScoped);
+    // Fixed land (skip index 0: the central island is drawn by the fixed scene).
+    for (island, _) in spawn_land(&mut commands, &mut meshes, &mats, &world.sea.rocks[1..]) {
+        commands.entity(island).insert(SessionScoped);
     }
 
     if let Rules::WorldWeaver(ww) = &world.rules {
@@ -395,9 +393,8 @@ fn sync_session_scene(
                 }
             }
             for piece in unique {
-                for rock in piece.geometry(s, t) {
-                    let parent = spawn_rock(&mut commands, &mut meshes, &mats, rock);
-                    commands.entity(parent).insert((SessionScoped, SlicePreview { sector: s, piece }, Visibility::Hidden));
+                for (island, _) in spawn_land(&mut commands, &mut meshes, &mats, &piece.geometry(s, t)) {
+                    commands.entity(island).insert((SessionScoped, SlicePreview { sector: s, piece }, Visibility::Hidden));
                 }
             }
         }
@@ -435,14 +432,11 @@ fn sync_session_scene(
     }
 
     if let Rules::SpiralVoyage(sv) = &world.rules {
-        // Every world's land exists as a hidden group; each rock shows when the ship's view of
+        // Every world's land exists as a hidden group; each island shows when the ship's view of
         // the spiral resolves its position into its world.
         for (w, sw) in sv.worlds.iter().enumerate() {
-            for rock in sw.rocks.iter().skip(1) {
-                let parent = spawn_rock(&mut commands, &mut meshes, &mats, *rock);
-                commands
-                    .entity(parent)
-                    .insert((SessionScoped, WorldRocks { world: w, center: rock.center }, Visibility::Hidden));
+            for (island, center) in spawn_land(&mut commands, &mut meshes, &mats, &sw.rocks[1..]) {
+                commands.entity(island).insert((SessionScoped, WorldRocks { world: w, center }, Visibility::Hidden));
             }
         }
         // The south seam, where a clockwise circuit passes into the next world.
@@ -480,48 +474,28 @@ struct WorldRocks {
     center: Vec2,
 }
 
-/// A rock as a small connected cluster of boulders filling its collision circle. Deterministic
-/// from the position so retries look identical.
-fn spawn_rock(
+/// Land as merged islands: overlapping collision circles become one faceted mesh. Returns each
+/// island's entity with the cluster's centre (sim coordinates).
+fn spawn_land(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     mats: &SceneMaterials,
-    rock: sim::Circle,
-) -> Entity {
-    let r = rock.radius;
-    let seed = ((rock.center.x * 12.9898 + rock.center.y * 78.233).sin() * 43758.5453).fract().abs();
-    let yaw = seed * std::f32::consts::TAU;
-    let parent = commands
-        .spawn((
-            Transform::from_translation(to_world_h(rock.center, 0.0)).with_rotation(Quat::from_rotation_y(yaw)),
-            Visibility::Visible,
-        ))
-        .id();
-    let boulders: [(f32, Vec3, Vec3, bool); 3] = [
-        (0.72, Vec3::new(-0.22, -0.32, 0.10), Vec3::new(1.0, 0.72, 1.0), true),
-        (0.55, Vec3::new(0.32, -0.28, -0.22), Vec3::new(1.05, 0.8, 0.95), true),
-        (0.48, Vec3::new(0.05, 0.05, 0.26), Vec3::new(1.0, 1.0, 1.0), false),
-    ];
-    for (i, (size, offset, scale, round)) in boulders.into_iter().enumerate() {
-        let mesh = if round {
-            meshes.add(Sphere::new(r * size))
-        } else {
-            meshes.add(Cone {
-                radius: r * size,
-                height: r * 1.1,
-            })
-        };
-        let material = if i == 1 { mats.stone.clone() } else { mats.dark_stone.clone() };
-        commands.spawn((
-            Mesh3d(mesh),
-            MeshMaterial3d(material),
-            Transform::from_translation(offset * r)
-                .with_scale(scale)
-                .with_rotation(Quat::from_rotation_z(0.18 * (seed - 0.5))),
-            ChildOf(parent),
-        ));
-    }
-    parent
+    rocks: &[sim::Circle],
+) -> Vec<(Entity, Vec2)> {
+    models::clusters(rocks)
+        .into_iter()
+        .map(|cluster| {
+            let center = models::cluster_center(&cluster);
+            let entity = commands
+                .spawn((
+                    Mesh3d(meshes.add(models::island(&cluster, center, None))),
+                    MeshMaterial3d(mats.dark_stone.clone()),
+                    Transform::from_translation(to_world_h(center, 0.0)),
+                ))
+                .id();
+            (entity, center)
+        })
+        .collect()
 }
 
 /// How lit the beacon is: ramps during ignition, full at night, fades at dawn.
