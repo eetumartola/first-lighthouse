@@ -29,6 +29,9 @@ struct HudWeaver;
 struct HudHint;
 #[derive(Component)]
 struct RuleCard;
+/// Large transition title over the dusk and dawn fades.
+#[derive(Component)]
+struct PhaseTitle;
 #[derive(Component)]
 struct Toast {
     until: f32,
@@ -49,7 +52,8 @@ impl Plugin for UiPlugin {
             .add_systems(OnExit(AppState::Playing), despawn_hud)
             .add_systems(
                 Update,
-                (update_hud, update_rule_card, push_toasts, expire_toasts).run_if(in_state(AppState::Playing)),
+                (update_hud, update_phase_title, update_rule_card, push_toasts, expire_toasts)
+                    .run_if(in_state(AppState::Playing)),
             )
             .add_systems(OnEnter(AppState::Paused), spawn_pause)
             .add_systems(Update, update_pause_text.run_if(in_state(AppState::Paused)))
@@ -167,6 +171,25 @@ fn spawn_hud(mut commands: Commands, session: Res<Session>) {
         font(20.0),
         TextColor(INK),
         Node { position_type: PositionType::Absolute, left: px(18), top: px(44), ..default() },
+    ));
+    // Big transition title: "Sunset" over the dusk fade, "First light" over the sunrise. Fades in
+    // and out across the same seconds as the light itself.
+    commands.spawn((
+        HudRoot,
+        PhaseTitle,
+        Text::new(""),
+        font(96.0),
+        TextColor(WARM.with_alpha(0.0)),
+        Node {
+            position_type: PositionType::Absolute,
+            left: percent(50),
+            top: percent(14),
+            margin: UiRect::left(px(-320)),
+            width: px(640),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        TextLayout::new(Justify::Center, bevy::text::LineBreak::WordBoundary),
     ));
     commands.spawn((
         HudRoot,
@@ -334,6 +357,26 @@ fn update_hud(
         if t.0 != hint_text {
             t.0 = hint_text.to_string();
         }
+    }
+}
+
+/// "Sunset" and "First light": a bell-shaped fade across each transition, gone by the time the
+/// light has settled.
+fn update_phase_title(session: Res<Session>, mut titles: Query<(&mut Text, &mut TextColor), With<PhaseTitle>>) {
+    let Some(world) = session.world() else { return };
+    let t = world.tuning();
+    let (label, progress) = match world.phase {
+        Phase::Intro { elapsed } => ("Sunset", elapsed / t.intro_seconds),
+        Phase::Dawn { elapsed } => ("First light", elapsed / t.dawn_seconds),
+        _ => ("", 1.0),
+    };
+    // Rise over the first fifth, hold, fall over the last third.
+    let alpha = (progress / 0.2).min(1.0).min((1.0 - progress) / 0.33).clamp(0.0, 1.0);
+    for (mut text, mut color) in &mut titles {
+        if text.0 != label {
+            text.0 = label.to_string();
+        }
+        color.0 = WARM.with_alpha(alpha * 0.92);
     }
 }
 

@@ -681,32 +681,49 @@ fn update_exposure(
     mut ambient: ResMut<GlobalAmbientLight>,
 ) {
     let dawn = session.world().map(dawn_amount).unwrap_or(0.0);
-    // Dusk: the sea starts visible in warm evening light and fades to darkness as the night begins.
+    // Dusk: the sea starts in evening light and fades to darkness as the night begins.
     let flare = session.world().map(|w| w.dusk()).unwrap_or(0.0);
+    let warmth = dawn.max(flare);
     for mut e in &mut cams {
-        e.ev100 = BASE_EV100 - settings.brightness + dawn * 3.6;
+        e.ev100 = BASE_EV100 - settings.brightness + warmth * 3.6;
     }
-    // A low, amber sun: rock faces toward the east catch it while the shadow sides stay cool.
-    let night = LinearRgba::new(0.6, 0.7, 1.0, 1.0);
-    let day = LinearRgba::new(1.0, 0.66, 0.38, 1.0);
+    // Both transitions pass through the same sunset: amber low on the horizon, the sky violet.
+    // `warmth` is how far into daylight either transition is (dusk runs it backwards).
+    let sun_color = |k: f32| {
+        // Deep red-orange at the very edge of night, a pale gold as the light gains strength.
+        let ember = LinearRgba::new(1.0, 0.36, 0.14, 1.0);
+        let gold = LinearRgba::new(1.0, 0.86, 0.66, 1.0);
+        let night = LinearRgba::new(0.6, 0.7, 1.0, 1.0);
+        night.mix(&ember, (k * 3.0).min(1.0)).mix(&gold, k * k)
+    };
     for (mut light, mut tf) in &mut sky {
-        light.illuminance = 1.2 + dawn * dawn * 5_000.0 + flare * 150.0;
-        let flare_color = LinearRgba::new(1.0, 0.75, 0.45, 1.0);
-        light.color = Color::LinearRgba(night.mix(&day, dawn).mix(&flare_color, flare));
-        // The sun rises in the east, low and warm.
-        let pos = Vec3::new(-60.0, 120.0, -40.0).lerp(Vec3::new(160.0, 32.0, -20.0), dawn);
+        light.illuminance = 1.2 + dawn * dawn * 5_000.0 + flare * flare * 3_500.0;
+        light.color = Color::LinearRgba(sun_color(warmth));
+        // The sun rises in the east, low and warm; at dusk it sets in the west.
+        let (from, to) = if flare > 0.0 {
+            (Vec3::new(-60.0, 120.0, -40.0), Vec3::new(-160.0, 30.0, 20.0))
+        } else {
+            (Vec3::new(-60.0, 120.0, -40.0), Vec3::new(160.0, 32.0, -20.0))
+        };
+        let pos = from.lerp(to, warmth);
         *tf = Transform::from_translation(pos).looking_at(Vec3::ZERO, Vec3::Y);
     }
-    // Ambient stays cool at dawn so the warm sun reads as direction, not a global tint.
-    ambient.brightness = 2.6 + dawn * 220.0 + flare * 60.0;
-    ambient.color =
-        Color::LinearRgba(LinearRgba::new(0.5, 0.65, 0.9, 1.0).mix(&LinearRgba::new(0.7, 0.78, 0.9, 1.0), dawn));
-    // The star dome pales toward a dawn sky as the exposure drops: a deep blue-grey, not a
-    // daylight sky, so the horizon glow and the sea's rim still read.
+    // Ambient: violet at the sunset edge, cool blue by night, so the warm sun reads as direction.
+    let violet = LinearRgba::new(0.75, 0.45, 0.85, 1.0);
+    let cool = LinearRgba::new(0.5, 0.65, 0.9, 1.0);
+    ambient.brightness = 2.6 + warmth * 200.0;
+    ambient.color = Color::LinearRgba(cool.mix(&violet, (warmth * 2.5).min(1.0) * (1.0 - warmth * 0.5)));
+    // The star dome flushes with the sunset, then settles to a deep blue-grey in daylight so the
+    // sea's rim still reads.
     for handle in &dome {
         if let Some(mut m) = materials.get_mut(&handle.0) {
-            let k = 1.0 + dawn * 3.5;
-            m.base_color = Color::linear_rgb(k * (1.0 + 0.3 * dawn), k * (1.0 + 0.35 * dawn), k * (1.0 + 0.6 * dawn));
+            let k = 1.0 + warmth * 3.5;
+            let blush = (warmth * 3.0).min(1.0) * (1.0 - warmth);
+            m.base_color = Color::linear_rgb(
+                k * (1.0 + 0.3 * warmth + 1.6 * blush),
+                k * (1.0 + 0.35 * warmth + 0.5 * blush),
+                k * (1.0 + 0.6 * warmth + 0.9 * blush),
+            );
         }
     }
 }

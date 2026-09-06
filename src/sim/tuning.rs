@@ -138,8 +138,8 @@ impl Default for Tuning {
             mutable_sea_night: 180.0,
             world_weaver_night: 180.0,
             world_weaver_playback_limit: 45.0,
-            intro_seconds: 2.0,
-            dawn_seconds: 3.5,
+            intro_seconds: 6.0,
+            dawn_seconds: 6.0,
 
             beam_turn_seconds: 8.0,
             beam_accel_seconds: 0.25,

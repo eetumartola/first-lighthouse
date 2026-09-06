@@ -134,8 +134,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         }
         // The beam itself, from the tower to the sea's edge: a faint lane the spotlight sits in.
         if sea.fp_kind == 1u {
-            let lane_ang = 1.0 - smoothstep(sea.fp_half_angle * 0.5, sea.fp_half_angle, d);
-            let lane_r = smoothstep(8.0, 14.0, r) * (1.0 - smoothstep(sea.sea_radius - 4.0, sea.sea_radius, r));
+            // Soft: bright core narrower than the footprint, falling off well past its edge.
+            let lane_ang = pow(1.0 - smoothstep(0.0, sea.fp_half_angle * 2.2, d), 2.0);
+            let lane_r = smoothstep(8.0, 20.0, r) * (1.0 - smoothstep(sea.sea_radius - 12.0, sea.sea_radius, r));
             lane = sea.beam_lane * lane_ang * lane_r * (1.0 - fp);
         }
     }
