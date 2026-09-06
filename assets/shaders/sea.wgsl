@@ -152,18 +152,15 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // aliased grid on the ripple normals.
     emissive = emissive * (1.0 - 0.85 * sea.dawn);
     pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, 0.85, sea.dawn);
-    pbr_input.material.base_color = mix(
-        pbr_input.material.base_color,
-        vec4<f32>(0.05, 0.13, 0.17, 1.0),
-        sea.dawn,
-    );
+    pbr_input.material.base_color = mix(pbr_input.material.base_color, vec4<f32>(0.05, 0.13, 0.17, 1.0), sea.dawn);
 
     // Coast: foam breaking on the rocks and a paler wet shelf, broken up by moving noise so the
-    // grid never shows. Only lit water reveals it; nothing glows here in the dark.
+    // grid never shows. Only lit water reveals it: an unlit shore stays invisible in the dark.
     let surf_noise = value_noise(sim * 1.7 + vec2<f32>(t * 0.35, -t * 0.22));
     let surf_pulse = 0.65 + 0.35 * sin(t * 1.4 + surf_noise * TAU);
-    let foam = smoothstep(0.25, 0.85, shore + 0.3 * (surf_noise - 0.5)) * surf_pulse;
-    let shelf = smoothstep(0.05, 0.5, shore) * 0.35;
+    let coast_lit = max(max(faint, fp), sea.dawn);
+    let foam = smoothstep(0.25, 0.85, shore + 0.3 * (surf_noise - 0.5)) * surf_pulse * coast_lit;
+    let shelf = smoothstep(0.05, 0.5, shore) * 0.35 * coast_lit;
     pbr_input.material.base_color = mix(pbr_input.material.base_color, vec4<f32>(0.42, 0.47, 0.5, 1.0), min(foam * 0.8 + shelf, 1.0));
     pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, 0.7, foam);
 

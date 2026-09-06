@@ -6,7 +6,7 @@ use crate::sea::dawn_amount;
 use crate::sim::{self, world_weaver, Footprint, Phase, Rules};
 use bevy::camera::Exposure;
 use bevy::core_pipeline::tonemapping::Tonemapping;
-use bevy::light::{FogVolume, VolumetricFog, VolumetricLight};
+use bevy::light::{VolumetricFog, VolumetricLight};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use glam::Vec2;
@@ -35,6 +35,8 @@ struct FootprintLight;
 #[derive(Component)]
 struct Flame;
 
+#[derive(Component)]
+struct FogBeam;
 #[derive(Component)]
 struct FlameLight;
 
@@ -68,8 +70,7 @@ pub struct ScenePlugin;
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SceneState>()
-            .insert_resource(ClearColor(Color::srgb(0.004, 0.006, 0.012)))
-            .insert_resource(GlobalAmbientLight { color: Color::srgb(0.5, 0.65, 0.9), brightness: 2.6, ..default() })
+            .insert_resource(GlobalAmbientLight { color: Color::srgb(0.5, 0.65, 0.9), brightness: 0.5, ..default() })
             .add_systems(Startup, setup_scene)
             .add_systems(
                 Update,
@@ -144,34 +145,35 @@ fn setup_scene(
         Tonemapping::TonyMcMapface,
         Bloom { intensity: 0.22, ..Bloom::NATURAL },
         Exposure { ev100: BASE_EV100 },
-        VolumetricFog { ambient_intensity: 0.0, step_count: 40, ..default() },
+        VolumetricFog {
+            // The fog carries its own faint moon-grey so it reads as mist even where no light
+            // shaft crosses it; the beam then parts and lights it.
+            ambient_color: Color::srgb(0.6, 0.7, 0.9),
+            ambient_intensity: 0.0,
+            ..default()
+        },
         Msaa::Sample4,
     ));
 
-    // Fog volume covering the sea. Bevy attenuates in-scattered light over the volume's bounding
-    // radius, so a scene this large needs a thin density and a strong artistic light multiplier.
-    commands.spawn((
-        FogVolume {
-            density_factor: 0.008,
-            absorption: 0.05,
-            scattering: 0.9,
-            scattering_asymmetry: 0.3,
-            light_intensity: 26.0,
-            fog_color: Color::srgb(0.75, 0.85, 1.0),
-            ..default()
-        },
-        Transform::from_xyz(0.0, 12.0, 0.0).with_scale(Vec3::new(240.0, 32.0, 240.0)),
-    ));
-
-    // Sky light: moon by night, warming and brightening into the sun at first light.
+    // Sky light: moon by night, warming and brightening into the sun at first light. It lights
+    // the fog too, so the sea is a pale grey blanket rather than black.
     commands.spawn((
         SkyLight,
         DirectionalLight {
             illuminance: 1.2,
             color: Color::srgb(0.6, 0.7, 1.0),
-            shadow_maps_enabled: false,
+            shadow_maps_enabled: true,
             ..default()
         },
+        VolumetricLight,
+        // The fog is only lit inside the shadow cascade, so it must cover the whole sea.
+        bevy::light::CascadeShadowConfigBuilder {
+            num_cascades: 2,
+            maximum_distance: 900.0,
+            first_cascade_far_bound: 300.0,
+            ..default()
+        }
+        .build(),
         Transform::from_xyz(-60.0, 120.0, -40.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
@@ -209,7 +211,8 @@ fn setup_scene(
         PointLight {
             color: Color::srgb(1.0, 0.72, 0.4),
             intensity: 0.0,
-            range: 60.0,
+            // Short reach: the brazier must not reveal the reefs, only the island's own rocks.
+            range: 22.0,
             shadow_maps_enabled: false,
             ..default()
         },
@@ -238,6 +241,37 @@ fn setup_scene(
         },
         VolumetricLight,
         Transform::from_xyz(0.0, 14.6, 0.0).looking_at(Vec3::new(0.0, 0.0, -50.0), Vec3::Y),
+    ));
+    // Fog beam: a wide, very strong spot that exists only to blaze through the mist along the
+    // beam. It carries no shadows and is aimed at the footprint like the shaft.
+    commands.spawn((
+        FogBeam,
+        SpotLight {
+            color: Color::srgb(1.0, 0.9, 0.75),
+            intensity: 0.0,
+            range: 200.0,
+            shadow_maps_enabled: true,
+            inner_angle: 0.05,
+            outer_angle: 0.35,
+            ..default()
+        },
+        VolumetricLight,
+        Transform::from_xyz(0.0, 14.6, 0.0).looking_at(Vec3::new(0.0, 0.0, -50.0), Vec3::Y),
+    ));
+    // Moonlight on the fog: a wide, weak volumetric spot from high above, so the mist reads as a
+    // pale blanket without the fog volume's box ever showing.
+    commands.spawn((
+        SpotLight {
+            color: Color::srgb(0.62, 0.72, 0.95),
+            intensity: 900_000.0,
+            range: 500.0,
+            shadow_maps_enabled: true,
+            inner_angle: 0.1,
+            outer_angle: 0.42,
+            ..default()
+        },
+        VolumetricLight,
+        Transform::from_xyz(0.0, 380.0, 60.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
     // Footprint light: lights the water and whatever floats inside the patch.
     commands.spawn((
@@ -570,8 +604,9 @@ fn idle_beacon(time: &Time) -> (f32, f32) {
 fn update_beam_lights(
     session: Res<Session>,
     time: Res<Time>,
-    mut tower: Query<(&mut Transform, &mut SpotLight), (With<TowerBeam>, Without<FootprintLight>)>,
-    mut patch: Query<(&mut Transform, &mut SpotLight), (With<FootprintLight>, Without<TowerBeam>)>,
+    mut tower: Query<(&mut Transform, &mut SpotLight), (With<TowerBeam>, Without<FootprintLight>, Without<FogBeam>)>,
+    mut patch: Query<(&mut Transform, &mut SpotLight), (With<FootprintLight>, Without<TowerBeam>, Without<FogBeam>)>,
+    mut fog_beam: Query<(&mut Transform, &mut SpotLight), (With<FogBeam>, Without<TowerBeam>, Without<FootprintLight>)>,
 ) {
     let Some(world) = session.world() else {
         let (bearing, level) = idle_beacon(&time);
@@ -584,6 +619,9 @@ fn update_beam_lights(
             l.intensity = 140_000.0 * level;
         }
         for (_, mut l) in &mut patch {
+            l.intensity = 0.0;
+        }
+        for (_, mut l) in &mut fog_beam {
             l.intensity = 0.0;
         }
         return;
@@ -612,6 +650,17 @@ fn update_beam_lights(
                 light.intensity = if shaft_on { 90_000.0 * level } else { 0.0 };
             }
         }
+    }
+
+    for (mut tf, mut light) in &mut fog_beam {
+        *tf = Transform::from_xyz(0.0, 14.6, 0.0).looking_at(to_world_h(center, 0.0), Vec3::Y);
+        let half = match fp {
+            Footprint::Spot { half_angle, .. } => half_angle * 3.0,
+            Footprint::Sector { angle_start, angle_end, .. } => (angle_end - angle_start) * 0.5,
+        };
+        light.outer_angle = half.min(1.2);
+        light.inner_angle = light.outer_angle * 0.3;
+        light.intensity = if shaft_on { 600_000.0 * level } else { 0.0 };
     }
 
     for (mut tf, mut light) in &mut patch {
@@ -690,11 +739,12 @@ fn update_exposure(
     // Both transitions pass through the same sunset: amber low on the horizon, the sky violet.
     // `warmth` is how far into daylight either transition is (dusk runs it backwards).
     let sun_color = |k: f32| {
-        // Deep red-orange at the very edge of night, a pale gold as the light gains strength.
-        let ember = LinearRgba::new(1.0, 0.36, 0.14, 1.0);
+        // Deep blood-red at the very edge of night, warming to amber, then pale gold high up.
+        let blood = LinearRgba::new(1.0, 0.10, 0.03, 1.0);
+        let amber = LinearRgba::new(1.0, 0.45, 0.16, 1.0);
         let gold = LinearRgba::new(1.0, 0.86, 0.66, 1.0);
         let night = LinearRgba::new(0.6, 0.7, 1.0, 1.0);
-        night.mix(&ember, (k * 3.0).min(1.0)).mix(&gold, k * k)
+        night.mix(&blood, (k * 8.0).min(1.0)).mix(&amber, (k * 2.2).min(1.0)).mix(&gold, k * k)
     };
     for (mut light, mut tf) in &mut sky {
         light.illuminance = 1.2 + dawn * dawn * 5_000.0 + flare * flare * 3_500.0;
@@ -718,11 +768,11 @@ fn update_exposure(
     for handle in &dome {
         if let Some(mut m) = materials.get_mut(&handle.0) {
             let k = 1.0 + warmth * 3.5;
-            let blush = (warmth * 3.0).min(1.0) * (1.0 - warmth);
+            let blush = (warmth * 4.0).min(1.0) * (1.0 - warmth).powf(0.6);
             m.base_color = Color::linear_rgb(
-                k * (1.0 + 0.3 * warmth + 1.6 * blush),
+                k * (1.0 + 0.3 * warmth + 3.5 * blush),
                 k * (1.0 + 0.35 * warmth + 0.5 * blush),
-                k * (1.0 + 0.6 * warmth + 0.9 * blush),
+                k * (1.0 + 0.6 * warmth + 0.4 * blush),
             );
         }
     }

@@ -3,6 +3,7 @@
 mod app;
 mod audio;
 mod debug;
+mod fog;
 mod entities;
 mod labels;
 mod models;
@@ -39,6 +40,7 @@ fn main() {
             entities::EntitiesPlugin,
             labels::LabelsPlugin,
             ui::UiPlugin,
+            fog::FogPlugin,
             audio::AudioPlugin,
             debug::DebugPlugin,
             spiral_widget::SpiralWidgetPlugin,

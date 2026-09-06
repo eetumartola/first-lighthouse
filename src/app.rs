@@ -29,6 +29,8 @@ pub struct Settings {
     /// Developer experiment (F7): the spotlight modes also show the beam's whole thin sector
     /// dimly on the water, as Spiral Voyage always does. Presentation only; charging unchanged.
     pub beam_lane: bool,
+    /// Sea fog that the beam parts (F8). On by default.
+    pub fog: bool,
 }
 
 impl Default for Settings {
@@ -40,6 +42,7 @@ impl Default for Settings {
             autopilot: false,
             heading_lines: true,
             beam_lane: false,
+            fog: true,
         }
     }
 }
@@ -195,6 +198,9 @@ fn global_hotkeys(keys: Res<ButtonInput<KeyCode>>, mut settings: ResMut<Settings
     }
     if keys.just_pressed(KeyCode::F7) {
         settings.beam_lane = !settings.beam_lane;
+    }
+    if keys.just_pressed(KeyCode::F8) {
+        settings.fog = !settings.fog;
     }
 }
 
