@@ -1,3 +1,5 @@
 /target
 /dist
 screenshot-*.png
+/dist-windows
+first-lighthouse-*.zip
