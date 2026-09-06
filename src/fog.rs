@@ -136,7 +136,7 @@ fn update(
     // Clearance: the beam's whole lane parts the fog where it lights the water; everywhere it does
     // not, the fog closes back.
     let (bearing, near_half, far_half) = match footprint {
-        Some(Footprint::Spot { bearing, half_angle, .. }) => (bearing, half_angle * 4.5, half_angle * 8.0),
+        Some(Footprint::Spot { bearing, half_angle, .. }) => (bearing, half_angle * 4.5, half_angle * 9.0),
         Some(Footprint::Sector { angle_start, angle_end, .. }) => {
             let half = (angle_end - angle_start) * 0.5;
             ((angle_start + angle_end) * 0.5, half, half)
@@ -204,7 +204,7 @@ mod tests {
     fn fog_opening_is_half_current_width_on_camera_side_and_prior_width_beyond() {
         let beam_half = 0.1;
         let near = beam_half * 4.5;
-        let far = beam_half * 8.0;
+        let far = beam_half * 9.0;
 
         // Facing east, the clockwise (positive) shoulder points south toward the camera.
         assert_eq!(camera_side_half_width(FRAC_PI_2, 0.1, near, far), near);
@@ -213,6 +213,6 @@ mod tests {
         assert_eq!(camera_side_half_width(3.0 * FRAC_PI_2, -0.1, near, far), near);
         assert_eq!(camera_side_half_width(3.0 * FRAC_PI_2, 0.1, near, far), far);
         assert!((near / (beam_half * 9.0) - 0.5).abs() < f32::EPSILON);
-        assert!((far / beam_half - 8.0).abs() < f32::EPSILON);
+        assert!((far / beam_half - 9.0).abs() < f32::EPSILON);
     }
 }
