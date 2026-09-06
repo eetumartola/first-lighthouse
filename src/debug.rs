@@ -15,6 +15,7 @@ pub struct DebugPlugin;
 impl Plugin for DebugPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(KeyScript::from_env())
+            .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
             .add_systems(Startup, spawn_text)
             .add_systems(PreUpdate, scripted_keys.after(bevy::input::InputSystems))
             .add_systems(Update, (draw_overlay, update_text, screenshot_hotkey));
@@ -254,8 +255,17 @@ fn draw_overlay(settings: Res<Settings>, session: Res<Session>, mut gizmos: Gizm
 fn update_text(
     settings: Res<Settings>,
     session: Res<Session>,
+    diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
     mut q: Query<(&mut Text, &mut Visibility), With<DebugText>>,
 ) {
+    let fps = diagnostics
+        .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS)
+        .and_then(|d| d.smoothed())
+        .unwrap_or(0.0);
+    let frame_ms = diagnostics
+        .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FRAME_TIME)
+        .and_then(|d| d.smoothed())
+        .unwrap_or(0.0);
     for (mut text, mut vis) in &mut q {
         if !settings.debug_overlay {
             *vis = Visibility::Hidden;
@@ -263,12 +273,12 @@ fn update_text(
         }
         *vis = Visibility::Visible;
         let Some(world) = session.world() else {
-            text.0 = "debug: no session".into();
+            text.0 = format!("debug: no session  {fps:.0} fps {frame_ms:.1} ms");
             continue;
         };
         let sea = &world.sea;
         let mut lines = vec![format!(
-            "phase {:?}  t={:.1}  beam bearing {:.1}° range {:.1} winding {:.2} rev {}",
+            "{fps:.0} fps {frame_ms:.1} ms  phase {:?}  t={:.1}  beam bearing {:.1}° range {:.1} winding {:.2} rev {}",
             world.phase,
             sea.time,
             sea.beam.bearing().to_degrees(),
