@@ -236,7 +236,6 @@ fn spawn_hud(mut commands: Commands, session: Res<Session>) {
         .with_children(|card| {
             card.spawn((Text::new(mode.tagline()), font(22.0), TextColor(WARM)));
             card.spawn((Text::new(mode.rules_summary()), font(17.0), TextColor(INK)));
-            card.spawn((Text::new(mode.controls()), font(15.0), TextColor(DIM)));
         });
 }
 
@@ -351,7 +350,7 @@ fn update_rule_card(
         Phase::Night => (1.0 - (session.night_seconds - 8.0) / 3.0).clamp(0.0, 1.0),
         _ => 0.0,
     };
-    const INKS: [Color; 3] = [WARM, INK, DIM];
+    const INKS: [Color; 2] = [WARM, INK];
     for (mut vis, mut bg, children) in &mut cards {
         *vis = if alpha > 0.0 { Visibility::Visible } else { Visibility::Hidden };
         bg.0 = PANEL.with_alpha(0.78 * alpha);

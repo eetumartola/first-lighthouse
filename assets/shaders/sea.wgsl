@@ -178,7 +178,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let back = -dot(d, fwd) - 3.5;
         let side = abs(d.x * fwd.y - d.y * fwd.x);
         if back < 0.0 || back > 22.0 { continue; }
-        let half_width = 1.8 + back * 0.3;
+        // The arms sway a little along the trail so the V reads as water, not a stencil.
+        let sway = 0.35 * sin(back * 0.9 - t * 1.6 + ship.x * 0.3);
+        let half_width = 1.8 + back * 0.3 + sway;
         let fade = 1.0 - back / 22.0;
         // Two arms of the V plus churned water down the middle, dissolving with distance.
         let arms = 1.0 - smoothstep(0.0, 0.8 + back * 0.1, abs(side - half_width));
