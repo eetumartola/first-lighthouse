@@ -30,7 +30,6 @@ pub struct Keeper {
     plan_index: usize,
 }
 
-
 impl Keeper {
     pub fn for_mode(mode: Mode) -> Self {
         // Ships cover a route point in a few seconds now, so the keeper paints ahead sooner:
@@ -51,14 +50,8 @@ impl Keeper {
         }
     }
 
-
     /// Route point a ship can actually see and that still needs light.
-    fn next_point(
-        target_charge: f32,
-        ship: &Entity,
-        route: &[Vec2],
-        charge_at: &dyn Fn(Vec2) -> f32,
-    ) -> Option<Vec2> {
+    fn next_point(target_charge: f32, ship: &Entity, route: &[Vec2], charge_at: &dyn Fn(Vec2) -> f32) -> Option<Vec2> {
         let fwd = dir(ship.heading);
         let visible = |p: &Vec2| {
             let to = *p - ship.pos;
@@ -80,11 +73,7 @@ impl Keeper {
                     .min_by(|a, b| a.1.distance(probe).total_cmp(&b.1.distance(probe)))
                     .map(|(i, _)| i)
             })?;
-        route[start..]
-            .iter()
-            .find(|p| charge_at(**p) < target_charge)
-            .or_else(|| route[start..].first())
-            .copied()
+        route[start..].iter().find(|p| charge_at(**p) < target_charge).or_else(|| route[start..].first()).copied()
     }
 
     /// Where the footprint should be right now (Night Watch / Mutable Sea). Routes are planned
@@ -145,15 +134,9 @@ impl Keeper {
                 let here = w.sea.beam.sector_index(t) == sector && ww.layer_for(&w.sea) == layer;
                 if here && d.abs() < t.sector_angle() * 0.35 {
                     self.plan_index += 1;
-                    return Input {
-                        capture: true,
-                        ..Default::default()
-                    };
+                    return Input { capture: true, ..Default::default() };
                 }
-                Input {
-                    rotate: d.signum(),
-                    ..Default::default()
-                }
+                Input { rotate: d.signum(), ..Default::default() }
             }
             Rules::SpiralVoyage(sv) => {
                 let Some(ship) = sv.ship.and_then(|id| w.sea.entity(id)) else { return Input::default() };
@@ -282,14 +265,8 @@ fn plan_route_with_buffer(
     goal: Vec2,
     steering_buffer: f32,
 ) -> Option<Vec<Vec2>> {
-    let sparse = route::find_route(
-        land,
-        t.sea_radius,
-        t.weaver_route_cell,
-        t.ship_radius + steering_buffer,
-        from,
-        goal,
-    )?;
+    let sparse =
+        route::find_route(land, t.sea_radius, t.weaver_route_cell, t.ship_radius + steering_buffer, from, goal)?;
     let mut route = vec![sparse[0]];
     for segment in sparse.windows(2) {
         let steps = (segment[0].distance(segment[1]) / 6.0).ceil().max(1.0) as usize;
@@ -318,9 +295,8 @@ pub fn spiral_world_routes() -> Vec<Vec<Vec2>> {
     let t = super::tuning::Tuning::default();
     // A ship following point guidance can deviate by roughly its minimum turning radius; retain
     // the route finder's normal margin beyond that dynamic envelope.
-    let steering_buffer = t.ship_speed * t.spiral_ship_speed_factor
-        / t.ship_turn_rate_deg.to_radians()
-        + t.weaver_route_margin;
+    let steering_buffer =
+        t.ship_speed * t.spiral_ship_speed_factor / t.ship_turn_rate_deg.to_radians() + t.weaver_route_margin;
     let worlds = level::parse(level::MODE4_LEVEL1, t.island_radius, t.sea_radius);
     let mut land = vec![super::geom::Circle::new(Vec2::ZERO, t.island_radius)];
     let mut routes = Vec::with_capacity(worlds.len());
@@ -342,9 +318,8 @@ pub fn spiral_world_routes() -> Vec<Vec<Vec2>> {
                 .unwrap_or_else(|| panic!("World {} has no passage to the harbor", world + 1));
             extend_route(&mut route, leg);
         } else {
-            let row =
-                append_seam_leg(&mut route, &land, &worlds[world + 1], &t, world, steering_buffer)
-                    .unwrap_or_else(|| panic!("World {} has no hull-clear south-seam exit", world + 1));
+            let row = append_seam_leg(&mut route, &land, &worlds[world + 1], &t, world, steering_buffer)
+                .unwrap_or_else(|| panic!("World {} has no hull-clear south-seam exit", world + 1));
             entry = level::cell_center(level::MODE4_LEVEL1, 0, row, t.island_radius, t.sea_radius);
         }
         routes.push(straighten(route, &land, &t, t.ship_radius + steering_buffer));
@@ -385,14 +360,11 @@ fn append_column_leg(
             if !level::is_free(level::MODE4_LEVEL1, world, candidate_col, row) {
                 continue;
             }
-            let goal =
-                level::cell_center(level::MODE4_LEVEL1, candidate_col, row, t.island_radius, t.sea_radius);
+            let goal = level::cell_center(level::MODE4_LEVEL1, candidate_col, row, t.island_radius, t.sea_radius);
             if hull_clearance(goal, land, t) < steering_buffer {
                 continue;
             }
-            if let Some(leg) =
-                plan_route_with_buffer(land, t, *route.last().unwrap(), goal, steering_buffer)
-            {
+            if let Some(leg) = plan_route_with_buffer(land, t, *route.last().unwrap(), goal, steering_buffer) {
                 extend_route(route, leg);
                 return Some(row);
             }
@@ -431,26 +403,16 @@ fn append_seam_leg(
         if clearance(row) < steering_buffer {
             continue;
         }
-        let goal =
-            level::cell_center(level::MODE4_LEVEL1, level::COLUMNS - 1, row, t.island_radius, t.sea_radius);
-        if let Some(leg) =
-            plan_route_with_buffer(land, t, *route.last().unwrap(), goal, steering_buffer)
-        {
+        let goal = level::cell_center(level::MODE4_LEVEL1, level::COLUMNS - 1, row, t.island_radius, t.sea_radius);
+        if let Some(leg) = plan_route_with_buffer(land, t, *route.last().unwrap(), goal, steering_buffer) {
             extend_route(route, leg);
             return Some(row);
         }
     }
     None
 }
-fn hull_clearance(
-    point: Vec2,
-    land: &[super::geom::Circle],
-    t: &super::tuning::Tuning,
-) -> f32 {
-    land.iter()
-        .map(|rock| point.distance(rock.center) - rock.radius)
-        .fold(f32::INFINITY, f32::min)
-        - t.ship_radius
+fn hull_clearance(point: Vec2, land: &[super::geom::Circle], t: &super::tuning::Tuning) -> f32 {
+    land.iter().map(|rock| point.distance(rock.center) - rock.radius).fold(f32::INFINITY, f32::min) - t.ship_radius
 }
 
 fn extend_route(route: &mut Vec<Vec2>, leg: Vec<Vec2>) {

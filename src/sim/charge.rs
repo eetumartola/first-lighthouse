@@ -67,7 +67,6 @@ impl ChargeField {
         self.charge_at(p) >= tuning.strong_threshold
     }
 
-
     /// Strongest glow touching a silhouette: the centre plus four points on its radius.
     pub fn glow_around(&self, center: Vec2, radius: f32) -> f32 {
         let mut best = self.charge_at(center);
@@ -136,7 +135,13 @@ impl ChargeField {
 
     /// `step`, charging only footprint cells whose centre satisfies `accept` (Spiral Voyage: the
     /// cells that belong to this world as seen from the ship).
-    pub fn step_where(&mut self, footprint: Option<&Footprint>, tuning: &Tuning, dt: f32, accept: impl Fn(Vec2) -> bool) {
+    pub fn step_where(
+        &mut self,
+        footprint: Option<&Footprint>,
+        tuning: &Tuning,
+        dt: f32,
+        accept: impl Fn(Vec2) -> bool,
+    ) {
         if let Some(fp) = footprint {
             let (center, radius) = fp.bounds();
             let lo = ((center - Vec2::splat(radius) - self.origin) / self.cell).floor();

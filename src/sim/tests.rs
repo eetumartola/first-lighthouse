@@ -223,10 +223,8 @@ fn world_weaver_two_different_assemblies_connect_the_endpoints() {
         let mut w = weaver_world(&plan);
         let route = weaver(&w).find_passage(&weaver(&w).assembled, w.tuning()).expect("passage");
         // The route crosses several sectors, not one radial strip.
-        let sectors: std::collections::BTreeSet<usize> = route
-            .iter()
-            .map(|p| (bearing_of(*p) / w.tuning().sector_angle()) as usize)
-            .collect();
+        let sectors: std::collections::BTreeSet<usize> =
+            route.iter().map(|p| (bearing_of(*p) / w.tuning().sector_angle()) as usize).collect();
         assert!(sectors.len() >= 4, "route only touched sectors {sectors:?}");
         run_until_finished(&mut w, |_| Input::default());
         let o = w.outcome.as_ref().unwrap();
@@ -378,9 +376,17 @@ fn spiral_view_is_continuous_at_the_seam_and_differs_only_at_the_antipode() {
     let n = w.tuning().spiral_worlds;
     // Bearings run clockwise from north; a clockwise ship passes the south seam from 179° to 181°.
     // Ship just before the seam in World 1.
-    let before = spiral_voyage::Perspective { winding: winding_in_world(0, 179f32.to_radians()), bearing: 179f32.to_radians(), worlds: n };
+    let before = spiral_voyage::Perspective {
+        winding: winding_in_world(0, 179f32.to_radians()),
+        bearing: 179f32.to_radians(),
+        worlds: n,
+    };
     // Ship just after it in World 2.
-    let after = spiral_voyage::Perspective { winding: winding_in_world(1, 181f32.to_radians()), bearing: 181f32.to_radians(), worlds: n };
+    let after = spiral_voyage::Perspective {
+        winding: winding_in_world(1, 181f32.to_radians()),
+        bearing: 181f32.to_radians(),
+        worlds: n,
+    };
     let r = 50.0;
     for deg in (0..360).step_by(3) {
         let p = geom::dir((deg as f32).to_radians()) * r;
@@ -509,7 +515,11 @@ fn spiral_seam_sampling_reads_the_neighbouring_world() {
         w.step(Input::default(), DT);
     }
     let e = w.sea.entity(ship).unwrap();
-    assert!(e.brain.desired_score > w.tuning().guidance_min_score, "seam-adjacent trail not read: {}", e.brain.desired_score);
+    assert!(
+        e.brain.desired_score > w.tuning().guidance_min_score,
+        "seam-adjacent trail not read: {}",
+        e.brain.desired_score
+    );
 }
 
 #[test]
@@ -532,10 +542,8 @@ fn spiral_keeper_brings_the_ship_through_four_worlds_to_harbor() {
                 Event::Sunk { id, pos, cause } if Some(id) == spiral(&w).ship => {
                     let world = spiral(&w).ship_world;
                     let route = &bot.world_routes[world];
-                    let nearest = route
-                        .iter()
-                        .enumerate()
-                        .min_by(|a, b| a.1.distance(pos).total_cmp(&b.1.distance(pos)));
+                    let nearest =
+                        route.iter().enumerate().min_by(|a, b| a.1.distance(pos).total_cmp(&b.1.distance(pos)));
                     let rock = spiral(&w).worlds[world]
                         .rocks
                         .iter()

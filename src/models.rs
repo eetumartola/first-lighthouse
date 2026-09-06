@@ -362,7 +362,12 @@ pub fn wheelhouse_windows() -> Mesh {
     }
     // Front pane on the raked wall.
     let z = 0.85 - 0.5 + 0.18 * 0.6 - 0.01;
-    soup.quad(Vec3::new(-0.34, y, z), Vec3::new(-0.34, y + 0.22, z + 0.06), Vec3::new(0.34, y + 0.22, z + 0.06), Vec3::new(0.34, y, z));
+    soup.quad(
+        Vec3::new(-0.34, y, z),
+        Vec3::new(-0.34, y + 0.22, z + 0.06),
+        Vec3::new(0.34, y + 0.22, z + 0.06),
+        Vec3::new(0.34, y, z),
+    );
     soup.mesh()
 }
 
@@ -403,8 +408,16 @@ pub fn serpent() -> Mesh {
     }
     // Dorsal fins: thin triangular plates along the ridge.
     for &(z, _, h, _) in &profile[3..10] {
-        soup.tri(Vec3::new(0.0, h - 0.05, z - 0.18), Vec3::new(0.0, h + 0.55, z + 0.05), Vec3::new(0.0, h - 0.05, z + 0.28));
-        soup.tri(Vec3::new(0.0, h - 0.05, z + 0.28), Vec3::new(0.0, h + 0.55, z + 0.05), Vec3::new(0.0, h - 0.05, z - 0.18));
+        soup.tri(
+            Vec3::new(0.0, h - 0.05, z - 0.18),
+            Vec3::new(0.0, h + 0.55, z + 0.05),
+            Vec3::new(0.0, h - 0.05, z + 0.28),
+        );
+        soup.tri(
+            Vec3::new(0.0, h - 0.05, z + 0.28),
+            Vec3::new(0.0, h + 0.55, z + 0.05),
+            Vec3::new(0.0, h - 0.05, z - 0.18),
+        );
     }
     soup.mesh()
 }

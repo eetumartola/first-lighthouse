@@ -37,7 +37,6 @@ pub struct FormAssets {
 #[derive(Component)]
 pub struct Visual {
     pub id: EntityId,
-
 }
 
 #[derive(Component)]
@@ -117,11 +116,7 @@ fn setup_assets(
             emissive: LinearRgba::new(1.5, 5.0, 2.5, 1.0),
             ..default()
         }),
-        stone: materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            perceptual_roughness: 0.92,
-            ..default()
-        }),
+        stone: materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.92, ..default() }),
         silhouettes: (0..SILHOUETTE_LEVELS)
             .map(|i| {
                 let alpha = 0.35 + 0.65 * i as f32 / (SILHOUETTE_LEVELS - 1) as f32;
@@ -147,7 +142,8 @@ fn parts(assets: &FormAssets, form: Form) -> Vec<(Handle<Mesh>, Handle<StandardM
             (
                 assets.boom.clone(),
                 assets.dark_wood.clone(),
-                Transform::from_xyz(0.0, 2.9, 0.15).with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2 * 0.92)),
+                Transform::from_xyz(0.0, 2.9, 0.15)
+                    .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2 * 0.92)),
             ),
             (assets.lantern.clone(), assets.lantern_glow.clone(), Transform::from_xyz(0.0, 4.15, -0.55)),
         ],
@@ -155,7 +151,8 @@ fn parts(assets: &FormAssets, form: Form) -> Vec<(Handle<Mesh>, Handle<StandardM
             (
                 assets.hull.clone(),
                 assets.dark_wood.clone(),
-                Transform::from_xyz(0.0, -0.25, 0.2).with_rotation(Quat::from_rotation_z(0.42) * Quat::from_rotation_x(0.12)),
+                Transform::from_xyz(0.0, -0.25, 0.2)
+                    .with_rotation(Quat::from_rotation_z(0.42) * Quat::from_rotation_x(0.12)),
             ),
             (
                 assets.broken_mast.clone(),
@@ -177,9 +174,8 @@ fn spawn_form(commands: &mut Commands, assets: &FormAssets, form: Form, transfor
     let parent = commands.spawn((transform, Visibility::Hidden, SessionScoped)).id();
     for (mesh, material, local) in parts(assets, form) {
         let eye = material == assets.eye_glow;
-        let lit = commands
-            .spawn((LitPart, Mesh3d(mesh.clone()), MeshMaterial3d(material), local, ChildOf(parent)))
-            .id();
+        let lit =
+            commands.spawn((LitPart, Mesh3d(mesh.clone()), MeshMaterial3d(material), local, ChildOf(parent))).id();
         if eye {
             commands.entity(lit).insert(EyePart);
         }
@@ -217,9 +213,7 @@ const VISUAL_SCALE: f32 = 2.8;
 
 fn heading_transform(pos: glam::Vec2, heading: f32, height: f32) -> Transform {
     let d = to_world(sim::geom::dir(heading));
-    Transform::from_translation(to_world_h(pos, height))
-        .looking_to(d, Vec3::Y)
-        .with_scale(Vec3::splat(VISUAL_SCALE))
+    Transform::from_translation(to_world_h(pos, height)).looking_to(d, Vec3::Y).with_scale(Vec3::splat(VISUAL_SCALE))
 }
 
 fn sync_visuals(
@@ -272,11 +266,7 @@ fn sync_visuals(
             rotation *= Quat::from_rotation_y(0.18 * k * (t * 23.0 + phase).sin());
             scale = Vec3::splat(VISUAL_SCALE * (1.0 + 0.07 * k * (t * 17.0 + phase).sin()));
         }
-        *tf = Transform {
-            translation: base.translation,
-            rotation,
-            scale,
-        };
+        *tf = Transform { translation: base.translation, rotation, scale };
     }
 }
 
@@ -285,7 +275,13 @@ fn apply_visibility(
     assets: Res<FormAssets>,
     mut parents: Query<(&Visual, &mut Visibility, &Children)>,
     mut parts: Query<
-        (&mut Visibility, Has<LitPart>, Option<&mut MeshMaterial3d<StandardMaterial>>, Has<SilhouettePart>, Has<EyePart>),
+        (
+            &mut Visibility,
+            Has<LitPart>,
+            Option<&mut MeshMaterial3d<StandardMaterial>>,
+            Has<SilhouettePart>,
+            Has<EyePart>,
+        ),
         Without<Visual>,
     >,
 ) {
@@ -298,7 +294,8 @@ fn apply_visibility(
         let mode_vis = world.entity_visibility(e);
         // A creature's eyes glow by themselves: they show in the dark whenever it is in the
         // inspected world, even when the rest of it is hidden.
-        let eyes_in_dark = e.form == Form::Creature && e.is_active() && world.entity_world(e) == world.inspected_world();
+        let eyes_in_dark =
+            e.form == Form::Creature && e.is_active() && world.entity_world(e) == world.inspected_world();
         *vis = if mode_vis.is_visible() || eyes_in_dark { Visibility::Visible } else { Visibility::Hidden };
         for child in children.iter() {
             if let Ok((mut cv, lit, material, sil, eye)) = parts.get_mut(child) {
@@ -310,7 +307,8 @@ fn apply_visibility(
                     SimVis::Silhouette(strength) => {
                         if sil {
                             if let Some(mut m) = material {
-                                let level = ((strength * (SILHOUETTE_LEVELS - 1) as f32).round() as usize).min(SILHOUETTE_LEVELS - 1);
+                                let level = ((strength * (SILHOUETTE_LEVELS - 1) as f32).round() as usize)
+                                    .min(SILHOUETTE_LEVELS - 1);
                                 let wanted = &assets.silhouettes[level];
                                 if m.0 != *wanted {
                                     m.0 = wanted.clone();

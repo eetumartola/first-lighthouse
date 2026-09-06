@@ -102,7 +102,9 @@ impl Session {
     pub fn view_pose(&self, e: &sim::Entity) -> (glam::Vec2, f32) {
         let alpha = self.alpha;
         match self.prev.entities.get(&e.id) {
-            Some(&(pos, heading)) => (pos.lerp(e.pos, alpha), heading + sim::geom::angle_delta(heading, e.heading) * alpha),
+            Some(&(pos, heading)) => {
+                (pos.lerp(e.pos, alpha), heading + sim::geom::angle_delta(heading, e.heading) * alpha)
+            }
             None => (e.pos, e.heading),
         }
     }
@@ -145,14 +147,8 @@ impl Plugin for AppPlugin {
             .add_systems(Update, global_hotkeys)
             .add_systems(Update, gather_capture.run_if(in_state(AppState::Playing)))
             .add_systems(FixedUpdate, step_simulation.run_if(in_state(AppState::Playing)))
-            .add_systems(
-                RunFixedMainLoop,
-                refresh_alpha.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop),
-            )
-            .add_systems(
-                Update,
-                (pause_input, finish_when_done).run_if(in_state(AppState::Playing)),
-            )
+            .add_systems(RunFixedMainLoop, refresh_alpha.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop))
+            .add_systems(Update, (pause_input, finish_when_done).run_if(in_state(AppState::Playing)))
             .add_systems(Update, paused_input.run_if(in_state(AppState::Paused)))
             .add_systems(Update, result_input.run_if(in_state(AppState::Result)))
             .add_systems(OnEnter(AppState::Menu), clear_session);
@@ -262,11 +258,7 @@ fn pause_input(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<AppSt
     }
 }
 
-fn paused_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut session: ResMut<Session>,
-    mut next: ResMut<NextState<AppState>>,
-) {
+fn paused_input(keys: Res<ButtonInput<KeyCode>>, mut session: ResMut<Session>, mut next: ResMut<NextState<AppState>>) {
     if keys.just_pressed(KeyCode::Escape) {
         next.set(AppState::Playing);
     } else if keys.just_pressed(KeyCode::KeyR) {
@@ -284,11 +276,7 @@ fn finish_when_done(session: Res<Session>, mut next: ResMut<NextState<AppState>>
     }
 }
 
-fn result_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut session: ResMut<Session>,
-    mut next: ResMut<NextState<AppState>>,
-) {
+fn result_input(keys: Res<ButtonInput<KeyCode>>, mut session: ResMut<Session>, mut next: ResMut<NextState<AppState>>) {
     if keys.just_pressed(KeyCode::KeyR) || keys.just_pressed(KeyCode::Enter) {
         let mode = session.selected;
         session.start(mode);

@@ -78,11 +78,7 @@ fn spawn_sea(
     let grid_size = (2.0 * tuning.sea_radius / tuning.cell_size).ceil() as usize;
     // R: plankton charge; G: shore proximity for foam. Both rewritten every frame.
     let mut image = Image::new_fill(
-        Extent3d {
-            width: grid_size as u32,
-            height: grid_size as u32,
-            depth_or_array_layers: 1,
-        },
+        Extent3d { width: grid_size as u32, height: grid_size as u32, depth_or_array_layers: 1 },
         TextureDimension::D2,
         &[0u8, 0u8],
         TextureFormat::Rg8Unorm,
@@ -117,10 +113,7 @@ fn spawn_sea(
         Name::new("Sea"),
     ));
 
-    commands.insert_resource(SeaHandles {
-        material,
-        charge_image,
-    });
+    commands.insert_resource(SeaHandles { material, charge_image });
 }
 
 fn update_sea(
@@ -150,25 +143,14 @@ fn update_sea(
     params.beam_lane = if matches!(world.rules, crate::sim::Rules::SpiralVoyage(_)) { 1.0 } else { 0.0 };
     if world.beam_active() {
         match session.view_footprint().unwrap_or_else(|| world.footprint()) {
-            Footprint::Spot {
-                bearing,
-                half_angle,
-                r_min,
-                r_max,
-            } => {
+            Footprint::Spot { bearing, half_angle, r_min, r_max } => {
                 params.fp_kind = 1;
                 params.fp_bearing = bearing;
                 params.fp_half_angle = half_angle;
                 params.fp_r_min = r_min;
                 params.fp_r_max = r_max;
             }
-            Footprint::Sector {
-                angle_start,
-                angle_end,
-                r_min,
-                r_max,
-                ..
-            } => {
+            Footprint::Sector { angle_start, angle_end, r_min, r_max, .. } => {
                 params.fp_kind = 2;
                 params.fp_bearing = (angle_start + angle_end) * 0.5;
                 params.fp_half_angle = (angle_end - angle_start) * 0.5;

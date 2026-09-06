@@ -31,10 +31,7 @@ fn main() {
         window.prevent_default_event_handling = true;
     }
     App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(window),
-            ..default()
-        }))
+        .add_plugins(DefaultPlugins.set(WindowPlugin { primary_window: Some(window), ..default() }))
         .add_plugins((
             app::AppPlugin,
             sea::SeaPlugin,
@@ -66,8 +63,6 @@ fn dispatch_audio(
     }
     let rotating = *state.get() == app::AppState::Playing
         && session.world().is_some_and(|w| w.beam_active())
-        && [KeyCode::KeyA, KeyCode::KeyD, KeyCode::ArrowLeft, KeyCode::ArrowRight]
-            .iter()
-            .any(|k| keys.pressed(*k));
+        && [KeyCode::KeyA, KeyCode::KeyD, KeyCode::ArrowLeft, KeyCode::ArrowRight].iter().any(|k| keys.pressed(*k));
     audio::set_rotating(&mut mechanism, rotating);
 }

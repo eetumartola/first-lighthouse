@@ -50,8 +50,7 @@ pub fn parse(text: &str, island: f32, sea: f32) -> Vec<Vec<Circle>> {
                 } else {
                     let first = sample * COLUMNS / samples;
                     let end = ((sample + 1) * COLUMNS).div_ceil(samples);
-                    let occupied =
-                        (first..end).filter(|&col| source_is_land(line, world, col)).count();
+                    let occupied = (first..end).filter(|&col| source_is_land(line, world, col)).count();
                     occupied * 2 >= end - first
                 };
                 if land {
@@ -65,17 +64,12 @@ pub fn parse(text: &str, island: f32, sea: f32) -> Vec<Vec<Circle>> {
 }
 
 fn source_is_land(line: &str, world: usize, col: usize) -> bool {
-    line.chars()
-        .nth(world * COLUMNS + col)
-        .is_some_and(|ch| ch == 'X' || ch == 'x')
+    line.chars().nth(world * COLUMNS + col).is_some_and(|ch| ch == 'X' || ch == 'x')
 }
 
 /// Whether a cell is free water: used to choose seam crossings and waypoints on authored maps.
 pub fn is_free(text: &str, world: usize, col: usize, row: usize) -> bool {
-    text.lines()
-        .nth(row)
-        .and_then(|l| l.chars().nth(world * COLUMNS + col))
-        .is_none_or(|ch| ch != 'X' && ch != 'x')
+    text.lines().nth(row).and_then(|l| l.chars().nth(world * COLUMNS + col)).is_none_or(|ch| ch != 'X' && ch != 'x')
 }
 
 /// Number of sea rows in the map.

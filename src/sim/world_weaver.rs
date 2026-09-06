@@ -158,11 +158,7 @@ impl WorldWeaver {
 
     /// All land of an assembled composition (every sector).
     pub fn composition_land(pieces: &[Piece], t: &Tuning) -> Vec<Circle> {
-        pieces
-            .iter()
-            .enumerate()
-            .flat_map(|(s, p)| p.geometry(s, t))
-            .collect()
+        pieces.iter().enumerate().flat_map(|(s, p)| p.geometry(s, t)).collect()
     }
 
     pub fn harbor_goal(t: &Tuning) -> Vec2 {
@@ -223,12 +219,7 @@ pub fn freeze_and_build(ww: &mut WorldWeaver, sea: &mut Sea) {
         e.brain.desired = ww.lane_heading;
     }
     ww.built = Some(built);
-    ww.playback = Playback {
-        route,
-        speed,
-        ship: Some(id),
-        ..Default::default()
-    };
+    ww.playback = Playback { route, speed, ship: Some(id), ..Default::default() };
 }
 
 pub fn begin_voyage(ww: &mut WorldWeaver, sea: &mut Sea) {
@@ -316,11 +307,5 @@ pub fn outcome(ww: &WorldWeaver, _sea: &Sea) -> Outcome {
         (None, true) => "The ship found its way through your sea to the harbor.".into(),
         (None, false) => "The voyage did not resolve.".into(),
     };
-    Outcome {
-        success: pb.arrived,
-        headline,
-        details,
-        rescued: pb.arrived as usize,
-        total: 1,
-    }
+    Outcome { success: pb.arrived, headline, details, rescued: pb.arrived as usize, total: 1 }
 }

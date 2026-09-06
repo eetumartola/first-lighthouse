@@ -116,12 +116,7 @@ fn spawn_text(mut commands: Commands) {
         Text::new(""),
         TextFont::from_font_size(13.0),
         TextColor(Color::srgb(0.7, 1.0, 0.7)),
-        Node {
-            position_type: PositionType::Absolute,
-            left: px(18),
-            top: px(80),
-            ..default()
-        },
+        Node { position_type: PositionType::Absolute, left: px(18), top: px(80), ..default() },
         Visibility::Hidden,
     ));
 }
@@ -256,7 +251,11 @@ fn draw_overlay(settings: Res<Settings>, session: Res<Session>, mut gizmos: Gizm
     }
 }
 
-fn update_text(settings: Res<Settings>, session: Res<Session>, mut q: Query<(&mut Text, &mut Visibility), With<DebugText>>) {
+fn update_text(
+    settings: Res<Settings>,
+    session: Res<Session>,
+    mut q: Query<(&mut Text, &mut Visibility), With<DebugText>>,
+) {
     for (mut text, mut vis) in &mut q {
         if !settings.debug_overlay {
             *vis = Visibility::Hidden;
@@ -286,7 +285,14 @@ fn update_text(settings: Res<Settings>, session: Res<Session>, mut q: Query<(&mu
         for e in &sea.entities {
             let timer = e
                 .mutable
-                .map(|m| format!("  timer {:.1}/{:.0}{}", m.progress, mutable_sea::dark_duration(e.form, sea), if m.deferred { " deferred" } else { "" }))
+                .map(|m| {
+                    format!(
+                        "  timer {:.1}/{:.0}{}",
+                        m.progress,
+                        mutable_sea::dark_duration(e.form, sea),
+                        if m.deferred { " deferred" } else { "" }
+                    )
+                })
                 .unwrap_or_default();
             lines.push(format!(
                 "{:<11} {:<8} {:?} ({:6.1},{:6.1}) hdg {:5.1}° want {:5.1}° score {:5.1} world {} {:?}{}",
@@ -305,7 +311,8 @@ fn update_text(settings: Res<Settings>, session: Res<Session>, mut q: Query<(&mu
         }
         match &world.rules {
             Rules::WorldWeaver(ww) => {
-                let edited: Vec<usize> = ww.edited.iter().enumerate().filter(|(_, e)| **e).map(|(s, _)| s + 1).collect();
+                let edited: Vec<usize> =
+                    ww.edited.iter().enumerate().filter(|(_, e)| **e).map(|(s, _)| s + 1).collect();
                 lines.push(format!(
                     "weaver inspecting world {} sector {}  edited sectors {:?}  route {:?} speed {:.1}",
                     ww.layer_for(sea) + 1,

@@ -43,7 +43,11 @@ impl Grid {
     }
 
     fn free(&self, i: isize, j: isize) -> bool {
-        i >= 0 && j >= 0 && (i as usize) < self.size && (j as usize) < self.size && !self.blocked[j as usize * self.size + i as usize]
+        i >= 0
+            && j >= 0
+            && (i as usize) < self.size
+            && (j as usize) < self.size
+            && !self.blocked[j as usize * self.size + i as usize]
     }
 
     /// Nearest free cell to `p` (search rings outward).
@@ -95,7 +99,14 @@ pub fn segment_clear(a: Vec2, b: Vec2, land: &[Circle], sea_radius: f32, clearan
 }
 
 /// Find a hull-clearance route from `start` to `goal`, or `None` when no passage exists.
-pub fn find_route(land: &[Circle], sea_radius: f32, cell: f32, clearance: f32, start: Vec2, goal: Vec2) -> Option<Vec<Vec2>> {
+pub fn find_route(
+    land: &[Circle],
+    sea_radius: f32,
+    cell: f32,
+    clearance: f32,
+    start: Vec2,
+    goal: Vec2,
+) -> Option<Vec<Vec2>> {
     let grid = Grid::new(land, sea_radius, cell, clearance);
     let (si, sj) = grid.nearest_free(start)?;
     let (gi, gj) = grid.nearest_free(goal)?;
@@ -115,10 +126,8 @@ pub fn find_route(land: &[Circle], sea_radius: f32, cell: f32, clearance: f32, s
     let mut open = BinaryHeap::new();
     g[start_idx] = 0;
     open.push(Node { f: heuristic(start_idx), idx: start_idx });
-    const DIRS: [(isize, isize, u32); 8] = [
-        (1, 0, 10), (-1, 0, 10), (0, 1, 10), (0, -1, 10),
-        (1, 1, 14), (1, -1, 14), (-1, 1, 14), (-1, -1, 14),
-    ];
+    const DIRS: [(isize, isize, u32); 8] =
+        [(1, 0, 10), (-1, 0, 10), (0, 1, 10), (0, -1, 10), (1, 1, 14), (1, -1, 14), (-1, 1, 14), (-1, -1, 14)];
     while let Some(Node { idx, .. }) = open.pop() {
         if idx == goal_idx {
             break;
@@ -182,9 +191,8 @@ mod tests {
     #[test]
     fn route_threads_a_gap_with_clearance_and_reports_no_passage_when_walled() {
         // A wall across the sea with one gap.
-        let mut land: Vec<Circle> = (0..20)
-            .map(|k| Circle::new(Vec2::new(-95.0 + k as f32 * 10.0, 0.0), 5.5))
-            .collect();
+        let mut land: Vec<Circle> =
+            (0..20).map(|k| Circle::new(Vec2::new(-95.0 + k as f32 * 10.0, 0.0), 5.5)).collect();
         land.remove(10); // gap around x = 5
         let start = Vec2::new(0.0, 60.0);
         let goal = Vec2::new(0.0, -60.0);

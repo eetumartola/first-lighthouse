@@ -55,7 +55,6 @@ impl Corridor {
     }
 }
 
-
 /// Corridor for one heading: summed charge along a lookahead corridor that starts *beyond the
 /// hull* (the cell the ship sits in is never "ahead"), slightly favouring the near end so a turn
 /// can still be executed. A corridor counts as illumination only if it is lit at two or more
@@ -68,18 +67,14 @@ pub fn corridor(from: Vec2, heading: f32, waters: &impl Waters, t: &Tuning) -> O
     let first = (t.ship_length / step).round() as usize;
     let count = (t.guidance_lookahead() / step).ceil() as usize;
     let turn_radius = t.ship_speed / t.ship_turn_rate_deg.to_radians();
-    let reject_within =
-        (t.guidance_obstacle_lengths * t.ship_length + t.ship_radius).max(turn_radius + t.ship_radius);
+    let reject_within = (t.guidance_obstacle_lengths * t.ship_length + t.ship_radius).max(turn_radius + t.ship_radius);
     let mut score = 0.0;
     let mut lit = 0;
     let mut reach = 0.0;
     for k in first..=count {
         let dist = k as f32 * step;
         let p = from + d * dist;
-        if t.guidance_obstacle_rejection
-            && dist <= reject_within
-            && !waters.hull_is_clear(p, t.ship_radius)
-        {
+        if t.guidance_obstacle_rejection && dist <= reject_within && !waters.hull_is_clear(p, t.ship_radius) {
             return None;
         }
         let c = waters.charge_at(p);
@@ -141,7 +136,8 @@ pub fn steer_ship(e: &mut Entity, waters: &impl Waters, t: &Tuning, dt: f32) {
             if better {
                 // A dead incumbent is replaced at once; a live one only by a challenger that
                 // keeps winning for the dwell (crossing corridors jitter as the ship moves).
-                let same = !e.brain.challenger.is_nan() && angle_delta(e.brain.challenger, heading).abs() <= step * 1.01;
+                let same =
+                    !e.brain.challenger.is_nan() && angle_delta(e.brain.challenger, heading).abs() <= step * 1.01;
                 e.brain.challenger_for = if same { e.brain.challenger_for + 1.0 / t.guidance_hz } else { 0.0 };
                 e.brain.challenger = heading;
                 challenger_persists = true;

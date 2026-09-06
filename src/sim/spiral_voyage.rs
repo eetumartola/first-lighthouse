@@ -8,8 +8,8 @@ use super::beam::Footprint;
 use super::charge::ChargeField;
 use super::entity::{EntityId, Form, Status};
 use super::geom::{angle_delta, bearing_of, compass_word, turn_toward, Circle};
-use super::level::SEAM;
 use super::islands;
+use super::level::SEAM;
 use super::steering::{self, Waters};
 use super::tuning::Tuning;
 use super::{Cause, Event, Outcome, Sea};
@@ -103,17 +103,13 @@ impl Waters for SpiralWaters<'_> {
     fn hull_is_clear(&self, center: Vec2, radius: f32) -> bool {
         let world = self.world_at(center);
         let clear_in = |index: usize| {
-            self.worlds[index]
-                .rocks
-                .iter()
-                .all(|rock| center.distance(rock.center) >= radius + rock.radius)
+            self.worlds[index].rocks.iter().all(|rock| center.distance(rock.center) >= radius + rock.radius)
         };
         if center.length() > self.sea_radius - radius || !clear_in(world) {
             return false;
         }
         if center.y < 0.0 && center.x.abs() <= radius {
-            (world == 0 || clear_in(world - 1))
-                && (world + 1 == self.worlds.len() || clear_in(world + 1))
+            (world == 0 || clear_in(world - 1)) && (world + 1 == self.worlds.len() || clear_in(world + 1))
         } else {
             true
         }
@@ -153,7 +149,11 @@ impl SpiralVoyage {
         let worlds = self.worlds.len();
         match self.ship.and_then(|id| sea.entity(id)) {
             Some(e) => Perspective { winding: e.winding, bearing: bearing_of(e.pos), worlds },
-            None => Perspective { winding: winding_in_world(0, bearing_of(self.start)), bearing: bearing_of(self.start), worlds },
+            None => Perspective {
+                winding: winding_in_world(0, bearing_of(self.start)),
+                bearing: bearing_of(self.start),
+                worlds,
+            },
         }
     }
 
@@ -284,10 +284,9 @@ pub fn outcome(sv: &SpiralVoyage, sea: &Sea) -> Outcome {
     let reached = sv.ship_world(sea).map(|w| w + 1).unwrap_or(1);
     let (success, headline) = match sv.end {
         Some(VoyageEnd::Arrived) => (true, "The Wayfarer came through all four worlds to harbor.".to_string()),
-        Some(VoyageEnd::Grounded(at)) => (
-            false,
-            format!("The Wayfarer struck the {} rocks in World {reached}.", compass_word(at)),
-        ),
+        Some(VoyageEnd::Grounded(at)) => {
+            (false, format!("The Wayfarer struck the {} rocks in World {reached}.", compass_word(at)))
+        }
         None => (false, "The voyage did not resolve.".to_string()),
     };
     Outcome {

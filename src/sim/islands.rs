@@ -33,7 +33,6 @@ pub fn arc(r: f32, from_deg: f32, to_deg: f32, rock_radius: f32) -> Vec<Circle> 
         .collect()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

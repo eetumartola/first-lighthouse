@@ -62,13 +62,7 @@ fn font(size: f32) -> TextFont {
 }
 
 fn panel(width: Val) -> Node {
-    Node {
-        flex_direction: FlexDirection::Column,
-        padding: UiRect::all(px(22)),
-        row_gap: px(8),
-        width,
-        ..default()
-    }
+    Node { flex_direction: FlexDirection::Column, padding: UiRect::all(px(22)), row_gap: px(8), width, ..default() }
 }
 
 fn spawn_menu(mut commands: Commands, menu: Res<MenuState>) {
@@ -159,12 +153,7 @@ fn spawn_hud(mut commands: Commands, session: Res<Session>) {
         Text::new(mode.title()),
         font(24.0),
         TextColor(WARM),
-        Node {
-            position_type: PositionType::Absolute,
-            left: px(18),
-            top: px(14),
-            ..default()
-        },
+        Node { position_type: PositionType::Absolute, left: px(18), top: px(14), ..default() },
     ));
     commands.spawn((
         HudRoot,
@@ -172,24 +161,14 @@ fn spawn_hud(mut commands: Commands, session: Res<Session>) {
         Text::new(""),
         font(20.0),
         TextColor(INK),
-        Node {
-            position_type: PositionType::Absolute,
-            left: px(18),
-            top: px(44),
-            ..default()
-        },
+        Node { position_type: PositionType::Absolute, left: px(18), top: px(44), ..default() },
     ));
     commands.spawn((
         HudRoot,
         Text::new(mode.objective()),
         font(15.0),
         TextColor(DIM),
-        Node {
-            position_type: PositionType::Absolute,
-            left: px(18),
-            top: px(70),
-            ..default()
-        },
+        Node { position_type: PositionType::Absolute, left: px(18), top: px(70), ..default() },
     ));
     commands.spawn((
         HudRoot,
@@ -197,12 +176,7 @@ fn spawn_hud(mut commands: Commands, session: Res<Session>) {
         Text::new(""),
         font(20.0),
         TextColor(INK),
-        Node {
-            position_type: PositionType::Absolute,
-            right: px(18),
-            top: px(14),
-            ..default()
-        },
+        Node { position_type: PositionType::Absolute, right: px(18), top: px(14), ..default() },
     ));
     commands.spawn((
         HudRoot,
@@ -210,12 +184,7 @@ fn spawn_hud(mut commands: Commands, session: Res<Session>) {
         Text::new(""),
         font(20.0),
         TextColor(INK),
-        Node {
-            position_type: PositionType::Absolute,
-            right: px(18),
-            top: px(44),
-            ..default()
-        },
+        Node { position_type: PositionType::Absolute, right: px(18), top: px(44), ..default() },
     ));
     commands.spawn((
         HudRoot,
@@ -223,38 +192,27 @@ fn spawn_hud(mut commands: Commands, session: Res<Session>) {
         Text::new(mode.controls()),
         font(15.0),
         TextColor(DIM),
-        Node {
-            position_type: PositionType::Absolute,
-            bottom: px(12),
-            left: px(18),
-            ..default()
-        },
+        Node { position_type: PositionType::Absolute, bottom: px(12), left: px(18), ..default() },
     ));
     commands.spawn((
         HudRoot,
         Text::new("N"),
         font(18.0),
         TextColor(DIM),
+        Node { position_type: PositionType::Absolute, top: px(10), left: percent(50), ..default() },
+    ));
+    commands.spawn((
+        HudRoot,
+        ToastList,
         Node {
             position_type: PositionType::Absolute,
-            top: px(10),
-            left: percent(50),
+            right: px(18),
+            bottom: px(40),
+            flex_direction: FlexDirection::ColumnReverse,
+            row_gap: px(4),
             ..default()
         },
     ));
-    commands
-        .spawn((
-            HudRoot,
-            ToastList,
-            Node {
-                position_type: PositionType::Absolute,
-                right: px(18),
-                bottom: px(40),
-                flex_direction: FlexDirection::ColumnReverse,
-                row_gap: px(4),
-                ..default()
-            },
-        ));
     // Rule card: mode summary shown during ignition and the first moments of the night.
     commands
         .spawn((
@@ -333,7 +291,11 @@ fn update_hud(
             let layer = ww.layer_for(&world.sea) as usize;
             let sector = world.sea.beam.sector_index(world.tuning());
             let state = if layer == 0 {
-                if ww.edited[sector] { "assembled, edited" } else { "assembled, baseline" }
+                if ww.edited[sector] {
+                    "assembled, edited"
+                } else {
+                    "assembled, baseline"
+                }
             } else if ww.edited[sector] {
                 "sector edited in World 1"
             } else {
@@ -382,12 +344,7 @@ fn update_rule_card(session: Res<Session>, mut cards: Query<(&mut Visibility, &m
 }
 
 /// Short feedback lines for rescue, loss, transformation, capture.
-fn push_toasts(
-    mut commands: Commands,
-    session: Res<Session>,
-    time: Res<Time>,
-    list: Query<Entity, With<ToastList>>,
-) {
+fn push_toasts(mut commands: Commands, session: Res<Session>, time: Res<Time>, list: Query<Entity, With<ToastList>>) {
     let Some(world) = session.world() else { return };
     let Ok(list) = list.single() else { return };
     for ev in &session.events {
@@ -421,14 +378,15 @@ fn push_toasts(
             sim::Event::LayerChanged { layer } => format!("Inspecting World {}", *layer as usize + 1),
             sim::Event::NoPassage => "No passage to harbor.".into(),
             sim::Event::ShipCrossed { world: w } => format!("The Wayfarer crossed into World {}.", *w as usize + 1),
-            sim::Event::CreatureAppears { pos, .. } => format!("Something stirs in the {} dark. It follows the brightest light it can see.", sim::geom::compass_word(*pos)),
+            sim::Event::CreatureAppears { pos, .. } => format!(
+                "Something stirs in the {} dark. It follows the brightest light it can see.",
+                sim::geom::compass_word(*pos)
+            ),
             sim::Event::VoyageBegins => "The ship enters from the shipping lane.".into(),
             _ => continue,
         };
         commands.spawn((
-            Toast {
-                until: time.elapsed_secs() + 5.0,
-            },
+            Toast { until: time.elapsed_secs() + 5.0 },
             Text::new(text),
             font(17.0),
             TextColor(INK),
@@ -467,7 +425,11 @@ fn spawn_pause(mut commands: Commands) {
         ))
         .with_children(|p| {
             p.spawn((Text::new("Paused"), font(30.0), TextColor(WARM)));
-            p.spawn((Text::new("Esc  resume\nR    restart this scenario\nM    return to menu"), font(18.0), TextColor(INK)));
+            p.spawn((
+                Text::new("Esc  resume\nR    restart this scenario\nM    return to menu"),
+                font(18.0),
+                TextColor(INK),
+            ));
             p.spawn((PauseSettingsText, Text::new(""), font(16.0), TextColor(DIM)));
         });
 }
@@ -501,7 +463,11 @@ fn spawn_result(mut commands: Commands, session: Res<Session>) {
         ))
         .with_children(|p| {
             p.spawn((
-                Text::new(format!("{}: {}", world.mode.title(), if outcome.success { "success" } else { "not this night" })),
+                Text::new(format!(
+                    "{}: {}",
+                    world.mode.title(),
+                    if outcome.success { "success" } else { "not this night" }
+                )),
                 font(20.0),
                 TextColor(DIM),
             ));
@@ -513,10 +479,7 @@ fn spawn_result(mut commands: Commands, session: Res<Session>) {
                 Text::new("R / Enter  retry the same scenario        M / Esc  return to menu"),
                 font(16.0),
                 TextColor(DIM),
-                Node {
-                    margin: UiRect::top(px(16)),
-                    ..default()
-                },
+                Node { margin: UiRect::top(px(16)), ..default() },
             ));
         });
 }

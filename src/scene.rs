@@ -1,8 +1,8 @@
 //! Fixed scene: camera, fog, lighthouse, island, harbor, bearing reference, rocks, beam lights.
 
 use crate::app::{to_world, to_world_h, Session, Settings};
-use crate::sea::dawn_amount;
 use crate::models;
+use crate::sea::dawn_amount;
 use crate::sim::{self, world_weaver, Footprint, Phase, Rules};
 use bevy::camera::Exposure;
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -59,18 +59,13 @@ pub struct SceneMaterials {
     pub warm_glow: Handle<StandardMaterial>,
 }
 
-
 pub struct ScenePlugin;
 
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SceneState>()
             .insert_resource(ClearColor(Color::srgb(0.004, 0.006, 0.012)))
-            .insert_resource(GlobalAmbientLight {
-                color: Color::srgb(0.5, 0.65, 0.9),
-                brightness: 2.6,
-                ..default()
-            })
+            .insert_resource(GlobalAmbientLight { color: Color::srgb(0.5, 0.65, 0.9), brightness: 2.6, ..default() })
             .add_systems(Startup, setup_scene)
             .add_systems(
                 Update,
@@ -109,7 +104,6 @@ fn setup_scene(
         Name::new("Sky"),
     ));
 
-
     // Rock takes its tone from vertex colours (dark wet base, pale dry tops); the tower is
     // plain slate.
     let stone = materials.add(StandardMaterial {
@@ -117,11 +111,8 @@ fn setup_scene(
         perceptual_roughness: 0.92,
         ..default()
     });
-    let dark_stone = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.95,
-        ..default()
-    });
+    let dark_stone =
+        materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() });
     let bronze = materials.add(StandardMaterial {
         base_color: Color::srgb(0.55, 0.38, 0.18),
         metallic: 0.9,
@@ -139,26 +130,15 @@ fn setup_scene(
         MainCamera,
         bevy::ui::IsDefaultUiCamera,
         Camera3d::default(),
-        Projection::from(PerspectiveProjection {
-            fov: 47f32.to_radians(),
-            ..default()
-        }),
+        Projection::from(PerspectiveProjection { fov: 47f32.to_radians(), ..default() }),
         // Framed so the full sea disc (radius 100) fits vertically with room for the bottom HUD.
         // `FIRST_LIGHT_CAMERA=x,y,z,tx,ty,tz` (render coordinates) overrides it for model review.
-        review_camera().unwrap_or_else(|| {
-            Transform::from_xyz(0.0, 225.0, 125.0).looking_at(Vec3::new(0.0, 0.0, 14.0), Vec3::Y)
-        }),
+        review_camera()
+            .unwrap_or_else(|| Transform::from_xyz(0.0, 225.0, 125.0).looking_at(Vec3::new(0.0, 0.0, 14.0), Vec3::Y)),
         Tonemapping::TonyMcMapface,
-        Bloom {
-            intensity: 0.22,
-            ..Bloom::NATURAL
-        },
+        Bloom { intensity: 0.22, ..Bloom::NATURAL },
         Exposure { ev100: BASE_EV100 },
-        VolumetricFog {
-            ambient_intensity: 0.0,
-            step_count: 40,
-            ..default()
-        },
+        VolumetricFog { ambient_intensity: 0.0, step_count: 40, ..default() },
         Msaa::Sample4,
     ));
 
@@ -191,13 +171,9 @@ fn setup_scene(
 
     // Central island and lighthouse: a flat-topped crag, an octagonal stone tower, brazier and
     // bronze reflector.
-    let island_mesh = meshes.add(models::island(&[sim::Circle::new(Vec2::ZERO, t.island_radius)], Vec2::ZERO, Some(2.0)));
-    commands.spawn((
-        Mesh3d(island_mesh),
-        MeshMaterial3d(dark_stone.clone()),
-        Transform::IDENTITY,
-        Name::new("Island"),
-    ));
+    let island_mesh =
+        meshes.add(models::island(&[sim::Circle::new(Vec2::ZERO, t.island_radius)], Vec2::ZERO, Some(2.0)));
+    commands.spawn((Mesh3d(island_mesh), MeshMaterial3d(dark_stone.clone()), Transform::IDENTITY, Name::new("Island")));
     commands.spawn((
         Mesh3d(meshes.add(models::tower(&[(3.6, 1.4), (2.6, 0.8), (2.1, 4.2), (1.8, 5.0), (2.5, 0.5)], 8))),
         MeshMaterial3d(stone.clone()),
@@ -305,10 +281,9 @@ fn setup_scene(
     }
     commands.spawn((
         HarborPart,
-        Mesh3d(meshes.add(Torus {
-            minor_radius: 0.12,
-            major_radius: t.harbor_radius,
-        }.mesh().major_resolution(64).minor_resolution(8))),
+        Mesh3d(meshes.add(
+            Torus { minor_radius: 0.12, major_radius: t.harbor_radius }.mesh().major_resolution(64).minor_resolution(8),
+        )),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(1.0, 0.75, 0.4),
             emissive: LinearRgba::new(0.8, 0.45, 0.15, 1.0),
@@ -320,10 +295,9 @@ fn setup_scene(
 
     // Playable boundary and bearing reference: a faint ring with four compass buoys, north brightest.
     commands.spawn((
-        Mesh3d(meshes.add(Torus {
-            minor_radius: 0.18,
-            major_radius: t.sea_radius,
-        }.mesh().major_resolution(192).minor_resolution(8))),
+        Mesh3d(meshes.add(
+            Torus { minor_radius: 0.18, major_radius: t.sea_radius }.mesh().major_resolution(192).minor_resolution(8),
+        )),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(0.3, 0.45, 0.6),
             emissive: LinearRgba::new(0.12, 0.2, 0.32, 1.0),
@@ -336,11 +310,7 @@ fn setup_scene(
     for (i, bearing) in [0.0f32, 90.0, 180.0, 270.0].into_iter().enumerate() {
         let p = sim::geom::dir(bearing.to_radians()) * (t.sea_radius + 3.0);
         let strength = if i == 0 { 5.0 } else { 1.2 };
-        let color = if i == 0 {
-            LinearRgba::new(0.9, 0.95, 1.0, 1.0)
-        } else {
-            LinearRgba::new(0.5, 0.6, 0.8, 1.0)
-        };
+        let color = if i == 0 { LinearRgba::new(0.9, 0.95, 1.0, 1.0) } else { LinearRgba::new(0.5, 0.6, 0.8, 1.0) };
         commands.spawn((
             Mesh3d(buoy_body.clone()),
             MeshMaterial3d(dark_stone.clone()),
@@ -358,10 +328,7 @@ fn setup_scene(
         ));
     }
 
-    commands.insert_resource(SceneMaterials {
-        dark_stone,
-        warm_glow,
-    });
+    commands.insert_resource(SceneMaterials { dark_stone, warm_glow });
 }
 
 /// Equirectangular star field: dense faint stars, a few bright ones, and a cold glow band just
@@ -409,7 +376,6 @@ fn sky_image() -> Image {
     image
 }
 
-
 fn review_camera() -> Option<Transform> {
     let spec = std::env::var("FIRST_LIGHT_CAMERA").ok()?;
     let v: Vec<f32> = spec.split(',').filter_map(|s| s.trim().parse().ok()).collect();
@@ -455,7 +421,11 @@ fn sync_session_scene(
             }
             for piece in unique {
                 for (island, _) in spawn_land(&mut commands, &mut meshes, &mats, &piece.geometry(s, t)) {
-                    commands.entity(island).insert((SessionScoped, SlicePreview { sector: s, piece }, Visibility::Hidden));
+                    commands.entity(island).insert((
+                        SessionScoped,
+                        SlicePreview { sector: s, piece },
+                        Visibility::Hidden,
+                    ));
                 }
             }
         }
@@ -701,7 +671,8 @@ fn update_exposure(
         *tf = Transform::from_translation(pos).looking_at(Vec3::ZERO, Vec3::Y);
     }
     ambient.brightness = 4.0 + dawn * 300.0 + flare * 60.0;
-    ambient.color = Color::LinearRgba(LinearRgba::new(0.5, 0.65, 0.9, 1.0).mix(&LinearRgba::new(0.9, 0.85, 0.8, 1.0), dawn));
+    ambient.color =
+        Color::LinearRgba(LinearRgba::new(0.5, 0.65, 0.9, 1.0).mix(&LinearRgba::new(0.9, 0.85, 0.8, 1.0), dawn));
 }
 
 /// World Weaver: the lit sector previews its current piece (World 1 shows the assembled result);

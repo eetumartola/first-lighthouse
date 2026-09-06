@@ -102,11 +102,7 @@ impl Sounds {
         let player = AudioPlayer::new(self.handle(cue));
         match position {
             Some(pos) => {
-                commands.spawn((
-                    player,
-                    settings.with_spatial(true),
-                    Transform::from_translation(pos),
-                ));
+                commands.spawn((player, settings.with_spatial(true), Transform::from_translation(pos)));
             }
             None => {
                 commands.spawn((player, settings));
@@ -116,16 +112,8 @@ impl Sounds {
 
     /// Render every cue once and register it as an audio asset.
     fn synthesize(sources: &mut Assets<AudioSource>) -> Sounds {
-        let mut add = |samples: Vec<f32>| {
-            sources.add(AudioSource {
-                bytes: wav_bytes(&samples, SAMPLE_RATE).into(),
-            })
-        };
-        Sounds {
-            cues: Cue::ALL.map(|cue| add(render(cue))),
-            ambience: add(ambience()),
-            creak: add(creak()),
-        }
+        let mut add = |samples: Vec<f32>| sources.add(AudioSource { bytes: wav_bytes(&samples, SAMPLE_RATE).into() });
+        Sounds { cues: Cue::ALL.map(|cue| add(render(cue))), ambience: add(ambience()), creak: add(creak()) }
     }
 }
 
@@ -139,9 +127,7 @@ pub fn play_event(commands: &mut Commands, sounds: &Sounds, event: &SimEvent) {
         SimEvent::Dawn => sounds.play(commands, Cue::Dawn, None, 0.7),
         // A ship announcing itself out of the dark: deliberately quiet, the player has to listen.
         SimEvent::ShipArrived { pos, .. } => sounds.play(commands, Cue::Bell, at(pos), 0.35),
-        SimEvent::CreatureAppears { pos, .. } => {
-            sounds.play(commands, Cue::CreatureCall, at(pos), 0.8)
-        }
+        SimEvent::CreatureAppears { pos, .. } => sounds.play(commands, Cue::CreatureCall, at(pos), 0.8),
         SimEvent::Rescued { pos, .. } => sounds.play(commands, Cue::Rescue, at(pos), 0.8),
         SimEvent::Sunk { pos, .. } => sounds.play(commands, Cue::Splash, at(pos), 0.85),
         SimEvent::Wrecked { pos, .. } => sounds.play(commands, Cue::Splash, at(pos), 0.7),
@@ -398,12 +384,8 @@ fn bell() -> Vec<f32> {
     let dur = 1.4;
     let n = samples(dur);
     // (frequency, amplitude, decay seconds)
-    let partials: [(f32, f32, f32); 4] = [
-        (880.0, 1.0, 1.55),
-        (1409.0, 0.55, 1.05),
-        (2200.0, 0.30, 0.65),
-        (3320.0, 0.13, 0.35),
-    ];
+    let partials: [(f32, f32, f32); 4] =
+        [(880.0, 1.0, 1.55), (1409.0, 0.55, 1.05), (2200.0, 0.30, 0.65), (3320.0, 0.13, 0.35)];
     let mut rng = Rng::new(0x00BE_11A1);
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
@@ -415,11 +397,7 @@ fn bell() -> Vec<f32> {
             let e = (-t / decay).exp();
             s += a * e * ((TAU * f * t).sin() + 0.6 * (TAU * f * detune * t).sin());
         }
-        let strike = if t < 0.012 {
-            rng.noise() * (1.0 - t / 0.012) * 0.9
-        } else {
-            0.0
-        };
+        let strike = if t < 0.012 { rng.noise() * (1.0 - t / 0.012) * 0.9 } else { 0.0 };
         out.push(s * 0.3 * (t / 0.004).min(1.0) + strike);
     }
     finish(out, 0.8)
@@ -548,13 +526,7 @@ fn transform() -> Vec<f32> {
 fn dawn() -> Vec<f32> {
     let dur = 3.0;
     let n = samples(dur);
-    let partials: [(f32, f32); 5] = [
-        (110.0, 1.0),
-        (165.0, 0.68),
-        (220.0, 0.52),
-        (330.0, 0.30),
-        (440.0, 0.16),
-    ];
+    let partials: [(f32, f32); 5] = [(110.0, 1.0), (165.0, 0.68), (220.0, 0.52), (330.0, 0.30), (440.0, 0.16)];
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
         let t = i as f32 / SR;
@@ -582,8 +554,7 @@ fn voyage_join() -> Vec<f32> {
         for &(f, start) in &notes {
             let tn = t - start;
             if tn > 0.0 {
-                s += ((TAU * f * tn).sin() + 0.25 * (TAU * 2.0 * f * tn).sin())
-                    * ad(tn, 0.006, 0.20);
+                s += ((TAU * f * tn).sin() + 0.25 * (TAU * 2.0 * f * tn).sin()) * ad(tn, 0.006, 0.20);
             }
         }
         out.push(s * 0.5);
@@ -608,10 +579,7 @@ fn blocked() -> Vec<f32> {
         let rasp = rasp_lp.process(rng.noise(), 900.0);
         let ct = t - 0.1;
         let creak = if ct > 0.0 {
-            rasp * (0.45 + 0.55 * (TAU * 27.0 * ct).sin())
-                * smoothstep(ct / 0.06)
-                * (-ct / 0.22).exp()
-                * 1.6
+            rasp * (0.45 + 0.55 * (TAU * 27.0 * ct).sin()) * smoothstep(ct / 0.06) * (-ct / 0.22).exp() * 1.6
         } else {
             0.0
         };
@@ -626,8 +594,7 @@ fn ambience() -> Vec<f32> {
     let n = samples(dur);
     let fade = samples(0.4);
     let mut rng = Rng::new(0x5EA5_1DE5);
-    let (mut deep1, mut deep2, mut wash) =
-        (OnePole::default(), OnePole::default(), OnePole::default());
+    let (mut deep1, mut deep2, mut wash) = (OnePole::default(), OnePole::default(), OnePole::default());
     let mut buf = Vec::with_capacity(n + fade);
     for _ in 0..n + fade {
         let w = rng.noise();
@@ -699,9 +666,7 @@ mod tests {
         use bevy::audio::{Decodable, Source};
 
         let rendered = bell();
-        let source = AudioSource {
-            bytes: wav_bytes(&rendered, SAMPLE_RATE).into(),
-        };
+        let source = AudioSource { bytes: wav_bytes(&rendered, SAMPLE_RATE).into() };
         let decoder = source.decoder();
 
         assert_eq!(decoder.sample_rate().get(), SAMPLE_RATE);
@@ -737,10 +702,7 @@ mod tests {
             // The step across the loop point must be no worse than a typical step inside it.
             let inside = (1..n).map(|i| (buf[i] - buf[i - 1]).abs()).fold(0.0f32, f32::max);
             let seam = (buf[0] - buf[n - 1]).abs();
-            assert!(
-                seam <= inside,
-                "{name} clicks at the loop point: seam {seam} vs max inner step {inside}"
-            );
+            assert!(seam <= inside, "{name} clicks at the loop point: seam {seam} vs max inner step {inside}");
         }
     }
 }

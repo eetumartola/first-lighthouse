@@ -41,19 +41,8 @@ pub struct Beam {
 /// and radial half-length are the semi-axes, so it reads as a rounded patch rather than a wedge.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Footprint {
-    Spot {
-        bearing: f32,
-        half_angle: f32,
-        r_min: f32,
-        r_max: f32,
-    },
-    Sector {
-        index: usize,
-        angle_start: f32,
-        angle_end: f32,
-        r_min: f32,
-        r_max: f32,
-    },
+    Spot { bearing: f32, half_angle: f32, r_min: f32, r_max: f32 },
+    Sector { index: usize, angle_start: f32, angle_end: f32, r_min: f32, r_max: f32 },
 }
 
 impl Footprint {
@@ -61,23 +50,12 @@ impl Footprint {
         let r = p.length();
         let b = super::geom::bearing_of(p);
         match *self {
-            Footprint::Spot {
-                bearing,
-                half_angle,
-                r_min,
-                r_max,
-            } => {
+            Footprint::Spot { bearing, half_angle, r_min, r_max } => {
                 let u = angle_delta(bearing, b) / half_angle;
                 let v = (r - (r_min + r_max) * 0.5) / ((r_max - r_min) * 0.5);
                 u * u + v * v <= 1.0
             }
-            Footprint::Sector {
-                angle_start,
-                angle_end,
-                r_min,
-                r_max,
-                ..
-            } => {
+            Footprint::Sector { angle_start, angle_end, r_min, r_max, .. } => {
                 let a = (b - angle_start).rem_euclid(TAU);
                 r >= r_min && r <= r_max && a < (angle_end - angle_start)
             }
@@ -86,42 +64,24 @@ impl Footprint {
 
     pub fn center(&self) -> Vec2 {
         match *self {
-            Footprint::Spot {
-                bearing,
-                r_min,
-                r_max,
-                ..
-            } => dir(bearing) * ((r_min + r_max) * 0.5),
-            Footprint::Sector {
-                angle_start,
-                angle_end,
-                r_min,
-                r_max,
-                ..
-            } => dir((angle_start + angle_end) * 0.5) * ((r_min + r_max) * 0.5),
+            Footprint::Spot { bearing, r_min, r_max, .. } => dir(bearing) * ((r_min + r_max) * 0.5),
+            Footprint::Sector { angle_start, angle_end, r_min, r_max, .. } => {
+                dir((angle_start + angle_end) * 0.5) * ((r_min + r_max) * 0.5)
+            }
         }
     }
 
     pub fn bearing(&self) -> f32 {
         match *self {
             Footprint::Spot { bearing, .. } => bearing,
-            Footprint::Sector {
-                angle_start,
-                angle_end,
-                ..
-            } => (angle_start + angle_end) * 0.5,
+            Footprint::Sector { angle_start, angle_end, .. } => (angle_start + angle_end) * 0.5,
         }
     }
 
     /// Conservative bounding circle for grid iteration.
     pub fn bounds(&self) -> (Vec2, f32) {
         match *self {
-            Footprint::Spot {
-                half_angle,
-                r_min,
-                r_max,
-                ..
-            } => {
+            Footprint::Spot { half_angle, r_min, r_max, .. } => {
                 let c = self.center();
                 let half_len = (r_max - r_min) * 0.5;
                 let half_w = r_max * half_angle.sin();

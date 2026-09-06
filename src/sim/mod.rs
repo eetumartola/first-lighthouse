@@ -5,11 +5,11 @@
 
 pub mod autopilot;
 pub mod beam;
-pub mod level;
 pub mod charge;
 pub mod entity;
 pub mod geom;
 pub mod islands;
+pub mod level;
 pub mod mutable_sea;
 pub mod night_watch;
 pub mod route;
@@ -94,15 +94,21 @@ impl Mode {
             Mode::NightWatch => "Paint glowing routes ahead of ships and bring them to the northern harbor.",
             Mode::MutableSea => "Your light holds a form still; darkness changes it. Bring 2 of 3 home as ships.",
             Mode::WorldWeaver => "Copy sectors from Worlds 2 to 4 into World 1 until the lane connects to the harbor.",
-            Mode::SpiralVoyage => "Guide the ship across the south seam through all four worlds to the harbor in World 4.",
+            Mode::SpiralVoyage => {
+                "Guide the ship across the south seam through all four worlds to the harbor in World 4."
+            }
         }
     }
 
     pub fn controls(self) -> &'static str {
         match self {
-            Mode::NightWatch | Mode::MutableSea => "A / D turn spotlight    W / S move the patch farther / nearer    Esc pause",
+            Mode::NightWatch | Mode::MutableSea => {
+                "A / D turn spotlight    W / S move the patch farther / nearer    Esc pause"
+            }
             Mode::WorldWeaver => "A / D wind backward / forward    Space copy lit sector into World 1    Esc pause",
-            Mode::SpiralVoyage => "A / D turn spotlight and wind through worlds    W / S move the patch farther / nearer    Esc pause",
+            Mode::SpiralVoyage => {
+                "A / D turn spotlight and wind through worlds    W / S move the patch farther / nearer    Esc pause"
+            }
         }
     }
 }
@@ -110,10 +116,14 @@ impl Mode {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Phase {
     /// Dusk: the sea is visible and fades to darkness; the player may aim but nothing moves yet.
-    Intro { elapsed: f32 },
+    Intro {
+        elapsed: f32,
+    },
     Night,
     /// Sunrise transition; the sea is revealed and rules stop.
-    Dawn { elapsed: f32 },
+    Dawn {
+        elapsed: f32,
+    },
     /// World Weaver only: the assembled world plays out.
     Playback,
     Finished,
@@ -130,19 +140,50 @@ pub enum Event {
     Ignite,
     NightBegins,
     Dawn,
-    ShipArrived { id: EntityId, pos: Vec2 },
-    CreatureAppears { id: EntityId, pos: Vec2 },
-    Rescued { id: EntityId, pos: Vec2 },
-    Sunk { id: EntityId, pos: Vec2, cause: Cause },
+    ShipArrived {
+        id: EntityId,
+        pos: Vec2,
+    },
+    CreatureAppears {
+        id: EntityId,
+        pos: Vec2,
+    },
+    Rescued {
+        id: EntityId,
+        pos: Vec2,
+    },
+    Sunk {
+        id: EntityId,
+        pos: Vec2,
+        cause: Cause,
+    },
     /// Mutable Sea damage: the ship became a wreck.
-    Wrecked { id: EntityId, pos: Vec2, cause: Cause },
-    Transformed { id: EntityId, pos: Vec2, from: Form, to: Form },
-    Bell { pos: Vec2 },
-    CreatureCall { pos: Vec2 },
+    Wrecked {
+        id: EntityId,
+        pos: Vec2,
+        cause: Cause,
+    },
+    Transformed {
+        id: EntityId,
+        pos: Vec2,
+        from: Form,
+        to: Form,
+    },
+    Bell {
+        pos: Vec2,
+    },
+    CreatureCall {
+        pos: Vec2,
+    },
     /// The inspected world changed (World Weaver browsing).
-    LayerChanged { layer: u8 },
+    LayerChanged {
+        layer: u8,
+    },
     /// World Weaver: a sector's land was copied into World 1 from `layer`.
-    Captured { sector: usize, layer: u8 },
+    Captured {
+        sector: usize,
+        layer: u8,
+    },
     /// World Weaver: Space pressed while inspecting the assembled world itself.
     AssembledWorld,
     VoyageBegins,
@@ -150,7 +191,9 @@ pub enum Event {
     NoPassage,
     VoyageArrived,
     /// Spiral Voyage: the ship crossed the seam into `world` (0-based).
-    ShipCrossed { world: u8 },
+    ShipCrossed {
+        world: u8,
+    },
     SessionEnded,
 }
 
@@ -212,8 +255,7 @@ impl Sea {
     pub fn spawn(&mut self, name: &'static str, form: Form, pos: Vec2, heading: f32) -> EntityId {
         let id = self.next_id;
         self.next_id += 1;
-        self.entities
-            .push(Entity::new(id, name, form, pos, heading, &self.tuning));
+        self.entities.push(Entity::new(id, name, form, pos, heading, &self.tuning));
         id
     }
 
@@ -248,11 +290,7 @@ impl Sea {
 
     /// Moor a rescued ship at a visible slot beside the harbor.
     pub fn secure(&mut self, id: EntityId) {
-        let slot = self
-            .entities
-            .iter()
-            .filter(|e| e.status == Status::Secured)
-            .count();
+        let slot = self.entities.iter().filter(|e| e.status == Status::Secured).count();
         let harbor = self.tuning.harbor_center;
         let Some(e) = self.entity_mut(id) else { return };
         e.status = Status::Secured;

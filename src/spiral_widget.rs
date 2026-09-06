@@ -137,11 +137,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
     commands.spawn((ShipBead, Mesh3d(bead), MeshMaterial3d(ship_bead), Transform::default(), layer.clone()));
 
     commands.spawn((
-        DirectionalLight {
-            illuminance: 9_000.0,
-            shadow_maps_enabled: false,
-            ..default()
-        },
+        DirectionalLight { illuminance: 9_000.0, shadow_maps_enabled: false, ..default() },
         Transform::from_xyz(3.0, 6.0, 5.0).looking_at(Vec3::new(0.0, height * 0.5, 0.0), Vec3::Y),
         layer.clone(),
     ));
@@ -160,10 +156,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
             },
             ..default()
         },
-        Projection::from(PerspectiveProjection {
-            fov: 20f32.to_radians(),
-            ..default()
-        }),
+        Projection::from(PerspectiveProjection { fov: 20f32.to_radians(), ..default() }),
         // Looking down at the stack from a distance so each turn reads as an elliptical step.
         Transform::from_xyz(0.0, mid_height + 5.5, 15.0).looking_at(Vec3::new(0.0, mid_height, 0.0), Vec3::Y),
         Tonemapping::TonyMcMapface,

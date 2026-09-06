@@ -33,9 +33,27 @@ impl MutableSea {
             Circle::new(Vec2::new(56.0, 32.0), 4.5),
         ];
         let identities = vec![
-            Identity { name: "Kestrel", form: Form::Ship, pos: Vec2::new(-62.0, 52.0), heading_deg: 150.0, progress: 0.0 },
-            Identity { name: "Merlin", form: Form::Ship, pos: Vec2::new(72.0, -18.0), heading_deg: 262.0, progress: 3.0 },
-            Identity { name: "Osprey", form: Form::Creature, pos: Vec2::new(-24.0, -58.0), heading_deg: 20.0, progress: 6.0 },
+            Identity {
+                name: "Kestrel",
+                form: Form::Ship,
+                pos: Vec2::new(-62.0, 52.0),
+                heading_deg: 150.0,
+                progress: 0.0,
+            },
+            Identity {
+                name: "Merlin",
+                form: Form::Ship,
+                pos: Vec2::new(72.0, -18.0),
+                heading_deg: 262.0,
+                progress: 3.0,
+            },
+            Identity {
+                name: "Osprey",
+                form: Form::Creature,
+                pos: Vec2::new(-24.0, -58.0),
+                heading_deg: 20.0,
+                progress: 6.0,
+            },
         ];
         (Self { identities, target_rescues: 2 }, rocks)
     }
@@ -56,9 +74,7 @@ pub fn dark_duration(form: Form, sea: &Sea) -> f32 {
 
 /// Fraction of the way to the next form; presentation uses this for the instability cue.
 pub fn instability(e: &Entity, sea: &Sea) -> f32 {
-    e.mutable
-        .map(|m| (m.progress / dark_duration(e.form, sea)).clamp(0.0, 1.0))
-        .unwrap_or(0.0)
+    e.mutable.map(|m| (m.progress / dark_duration(e.form, sea)).clamp(0.0, 1.0)).unwrap_or(0.0)
 }
 
 fn wreck(sea: &mut Sea, idx: usize, cause: Cause) {
@@ -94,10 +110,7 @@ pub fn step(_ms: &mut MutableSea, sea: &mut Sea, dt: f32) {
         let next = e.form.next();
         let placement = Circle::new(e.pos, next.radius(&t));
         let id = e.id;
-        let blocked = sea
-            .entities
-            .iter()
-            .any(|o| o.id != id && o.is_active() && o.circle().overlaps(&placement));
+        let blocked = sea.entities.iter().any(|o| o.id != id && o.is_active() && o.circle().overlaps(&placement));
         let e = &mut sea.entities[idx];
         let m = e.mutable.as_mut().unwrap();
         if blocked {
@@ -124,12 +137,8 @@ pub fn step(_ms: &mut MutableSea, sea: &mut Sea, dt: f32) {
     }
 
     // Creatures: follow light, threaten ships by contact.
-    let creature_ids: Vec<u32> = sea
-        .entities
-        .iter()
-        .filter(|e| e.is_active() && e.form == Form::Creature)
-        .map(|e| e.id)
-        .collect();
+    let creature_ids: Vec<u32> =
+        sea.entities.iter().filter(|e| e.is_active() && e.form == Form::Creature).map(|e| e.id).collect();
     for cid in creature_ids {
         let land = sea.land_for(cid);
         let Some(idx) = sea.entities.iter().position(|e| e.id == cid) else { continue };
