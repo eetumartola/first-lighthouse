@@ -68,7 +68,7 @@ impl Plugin for ScenePlugin {
             .insert_resource(ClearColor(Color::srgb(0.004, 0.006, 0.012)))
             .insert_resource(GlobalAmbientLight {
                 color: Color::srgb(0.5, 0.65, 0.9),
-                brightness: 4.0,
+                brightness: 2.6,
                 ..default()
             })
             .add_systems(Startup, setup_scene)

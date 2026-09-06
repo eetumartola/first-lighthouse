@@ -34,6 +34,8 @@ struct SeaParams {
     // 1 = the beam's whole length dimly lights the water (spotlight modes only)
     beam_lane: f32,
     _pad1: f32,
+    // Per ship: sim x, sim y, heading, active flag.
+    ships: array<vec4<f32>, 8>,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> sea: SeaParams;
@@ -86,9 +88,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let tilt = vec3<f32>(0.045 * (w1 + w3) + 0.03 * w4, 0.0, 0.045 * (w2 - w3) - 0.03 * w4);
     pbr_input.N = normalize(pbr_input.N + tilt);
 
-    // Plankton: charge in seconds of remaining afterglow.
+    // Plankton: charge in seconds of remaining afterglow. G holds shore proximity.
     let uv = (sim + vec2<f32>(sea.sea_radius)) / (2.0 * sea.sea_radius);
-    let charge = textureSample(charge_tex, charge_sampler, uv).r * sea.charge_cap;
+    let grid = textureSample(charge_tex, charge_sampler, uv);
+    let charge = grid.r * sea.charge_cap;
+    let shore = grid.g;
     let faint = smoothstep(0.0, sea.strong_threshold, charge);
     let strong = smoothstep(sea.strong_threshold, sea.charge_cap, charge);
     // Weak afterglow breaks into scattered motes; strong glow is a continuous luminous patch.
@@ -134,13 +138,48 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let lit_water = vec4<f32>(0.32, 0.42, 0.5, 1.0);
     pbr_input.material.base_color = mix(pbr_input.material.base_color, lit_water, fp * select(0.85, 0.2, sea.fp_kind == 2u) + lane * 0.12);
 
-    // Dawn: the sea lightens and the plankton fades against daylight.
+    // Dawn: the sea lightens and the plankton fades against daylight. Foam and wakes below sit
+    // on top of the daylit water.
     emissive = emissive * (1.0 - 0.85 * sea.dawn);
     pbr_input.material.base_color = mix(
         pbr_input.material.base_color,
         vec4<f32>(0.05, 0.13, 0.17, 1.0),
         sea.dawn,
     );
+
+    // Coast: foam breaking on the rocks and a paler wet shelf, broken up by moving noise so the
+    // grid never shows. Only lit water reveals it; nothing glows here in the dark.
+    let surf_noise = value_noise(sim * 1.7 + vec2<f32>(t * 0.35, -t * 0.22));
+    let surf_pulse = 0.65 + 0.35 * sin(t * 1.4 + surf_noise * TAU);
+    let foam = smoothstep(0.25, 0.85, shore + 0.3 * (surf_noise - 0.5)) * surf_pulse;
+    let shelf = smoothstep(0.05, 0.5, shore) * 0.35;
+    pbr_input.material.base_color = mix(pbr_input.material.base_color, vec4<f32>(0.42, 0.47, 0.5, 1.0), min(foam * 0.8 + shelf, 1.0));
+    pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, 0.7, foam);
+
+    // Wakes: a V of foam trailing each ship, a little stirred glow where plankton is charged.
+    var wake = 0.0;
+    for (var s = 0u; s < 8u; s = s + 1u) {
+        let ship = sea.ships[s];
+        if ship.w < 0.5 { continue; }
+        let fwd = vec2<f32>(sin(ship.z), cos(ship.z));
+        let d = sim - ship.xy;
+        // Hulls are drawn 2.8x their collision size: the stern sits about 4 units behind the
+        // centre and the beam is about 4 wide.
+        let back = -dot(d, fwd) - 3.5;
+        let side = abs(d.x * fwd.y - d.y * fwd.x);
+        if back < 0.0 || back > 22.0 { continue; }
+        let half_width = 1.8 + back * 0.3;
+        let fade = 1.0 - back / 22.0;
+        // Two arms of the V plus churned water down the middle, dissolving with distance.
+        let arms = 1.0 - smoothstep(0.0, 0.8 + back * 0.1, abs(side - half_width));
+        let churn = (1.0 - smoothstep(0.0, half_width * 0.7, side)) * 0.45;
+        let ripple = 0.7 + 0.3 * sin(back * 1.6 - t * 3.0 + surf_noise * 3.0);
+        wake = max(wake, (arms + churn) * fade * fade * ripple);
+    }
+    wake = clamp(wake, 0.0, 1.0);
+    pbr_input.material.base_color = mix(pbr_input.material.base_color, vec4<f32>(0.5, 0.56, 0.6, 1.0), wake * 0.6);
+    emissive = emissive + plankton_color * wake * faint * 0.35 * (1.0 - 0.85 * sea.dawn);
+
     pbr_input.material.emissive = pbr_input.material.emissive + vec4<f32>(emissive, 0.0);
 
 #ifdef PREPASS_PIPELINE

@@ -11,6 +11,9 @@ use bevy::shader::ShaderRef;
 
 pub type SeaMaterial = ExtendedMaterial<StandardMaterial, SeaExtension>;
 
+/// Ships whose wakes the water shows.
+pub const WAKE_SHIPS: usize = 8;
+
 #[derive(ShaderType, Reflect, Debug, Clone, Copy, Default)]
 pub struct SeaParams {
     pub time: f32,
@@ -26,6 +29,8 @@ pub struct SeaParams {
     /// 1 when the beam's whole length dimly lights the water (Spiral Voyage); 0 otherwise.
     pub beam_lane: f32,
     pub _pad1: f32,
+    /// Per ship: sim x, sim y, heading, 1 when active (0 = unused slot).
+    pub ships: [Vec4; WAKE_SHIPS],
 }
 
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
@@ -71,6 +76,7 @@ fn spawn_sea(
 ) {
     let tuning = crate::sim::Tuning::default();
     let grid_size = (2.0 * tuning.sea_radius / tuning.cell_size).ceil() as usize;
+    // R: plankton charge; G: shore proximity for foam. Both rewritten every frame.
     let mut image = Image::new_fill(
         Extent3d {
             width: grid_size as u32,
@@ -78,8 +84,8 @@ fn spawn_sea(
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        &[0u8],
-        TextureFormat::R8Unorm,
+        &[0u8, 0u8],
+        TextureFormat::Rg8Unorm,
         RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
     );
     image.sampler = ImageSampler::linear();
@@ -175,15 +181,51 @@ fn update_sea(
     }
     params.dawn = dawn_amount(world);
 
-    // Upload the charge grid of the inspected world (the spiral keeps one per world): one byte
-    // per cell, row j = sim y from -R upward.
+    // Wakes: active ships at their interpolated poses.
+    params.ships = [Vec4::ZERO; WAKE_SHIPS];
+    let mut slot = 0;
+    for e in &world.sea.entities {
+        if slot == WAKE_SHIPS {
+            break;
+        }
+        if e.is_active_ship() {
+            let (pos, heading) = session.view_pose(e);
+            params.ships[slot] = Vec4::new(pos.x, pos.y, heading, 1.0);
+            slot += 1;
+        }
+    }
+
+    // Upload the charge grid on view (the spiral composites one from the ship's perspective) and
+    // a shore mask: how much land lies within two cells. Row j = sim y from -R upward.
     if let Some(mut image) = images.get_mut(&handles.charge_image) {
         if let Some(data) = image.data.as_mut() {
             let field = world.view_charge();
             let cap = world.tuning().charge_cap;
-            debug_assert_eq!(data.len(), field.charge.len());
-            for (dst, c) in data.iter_mut().zip(field.charge.iter()) {
-                *dst = ((c / cap).clamp(0.0, 1.0) * 255.0) as u8;
+            let n = field.size;
+            debug_assert_eq!(data.len(), field.charge.len() * 2);
+            let land = |i: usize, j: usize| -> bool {
+                let idx = j * n + i;
+                !field.sea[idx] && field.cell_center(idx).length() <= field.sea_radius - field.cell
+            };
+            for j in 0..n {
+                for i in 0..n {
+                    let idx = j * n + i;
+                    data[idx * 2] = ((field.charge[idx] / cap).clamp(0.0, 1.0) * 255.0) as u8;
+                    let mut near = 0.0f32;
+                    for dj in -2i32..=2 {
+                        for di in -2i32..=2 {
+                            let (ii, jj) = (i as i32 + di, j as i32 + dj);
+                            if ii < 0 || jj < 0 || ii >= n as i32 || jj >= n as i32 {
+                                continue;
+                            }
+                            if land(ii as usize, jj as usize) {
+                                // Nearer land counts more, so the mask ramps toward the coast.
+                                near += 1.0 / (1.0 + (di * di + dj * dj) as f32);
+                            }
+                        }
+                    }
+                    data[idx * 2 + 1] = ((near / 3.0).clamp(0.0, 1.0) * 255.0) as u8;
+                }
             }
         }
     }
