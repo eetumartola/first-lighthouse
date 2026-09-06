@@ -457,10 +457,11 @@ fn spawn_pause(mut commands: Commands) {
 fn update_pause_text(settings: Res<Settings>, mut text: Query<&mut Text, With<PauseSettingsText>>) {
     for mut t in &mut text {
         t.0 = format!(
-            "[ ]  brightness {:+.1} stops\nF4   constant-speed rotation: {}\nF3   debug overlay: {}\nF6   skip to dawn    F9   demo keeper: {}",
+            "[ ]  brightness {:+.1} stops\nF4   constant-speed rotation: {}\nF3   debug overlay: {}\nF7   full beam lane on the water: {}\nF6   skip to dawn    F9   demo keeper: {}",
             settings.brightness,
             if settings.constant_speed_rotation { "on" } else { "off" },
             if settings.debug_overlay { "on" } else { "off" },
+            if settings.beam_lane { "on" } else { "off" },
             if settings.autopilot { "on" } else { "off" }
         );
     }

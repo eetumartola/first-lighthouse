@@ -26,6 +26,9 @@ pub struct Settings {
     pub autopilot: bool,
     /// Desired-heading dial lines on observable ships (F5). On by default in prototype play.
     pub heading_lines: bool,
+    /// Developer experiment (F7): the spotlight modes also show the beam's whole thin sector
+    /// dimly on the water, as Spiral Voyage always does. Presentation only; charging unchanged.
+    pub beam_lane: bool,
 }
 
 impl Default for Settings {
@@ -36,6 +39,7 @@ impl Default for Settings {
             debug_overlay: false,
             autopilot: false,
             heading_lines: true,
+            beam_lane: false,
         }
     }
 }
@@ -188,6 +192,9 @@ fn global_hotkeys(keys: Res<ButtonInput<KeyCode>>, mut settings: ResMut<Settings
     }
     if keys.just_pressed(KeyCode::F5) {
         settings.heading_lines = !settings.heading_lines;
+    }
+    if keys.just_pressed(KeyCode::F7) {
+        settings.beam_lane = !settings.beam_lane;
     }
 }
 

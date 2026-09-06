@@ -1,6 +1,6 @@
 //! Sea surface material: PBR water extended with the plankton charge texture and beam footprint.
 
-use crate::app::Session;
+use crate::app::{Session, Settings};
 use crate::sim::{Footprint, Phase};
 use bevy::asset::RenderAssetUsages;
 use bevy::image::ImageSampler;
@@ -119,6 +119,7 @@ fn spawn_sea(
 fn update_sea(
     time: Res<Time>,
     session: Res<Session>,
+    settings: Res<Settings>,
     handles: Res<SeaHandles>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<SeaMaterial>>,
@@ -139,8 +140,10 @@ fn update_sea(
     };
 
     // Footprint parameters, only while the beam lights the water. The spiral shows the beam's
-    // whole length dimly; the bright footprint alone charges plankton.
-    params.beam_lane = if matches!(world.rules, crate::sim::Rules::SpiralVoyage(_)) { 1.0 } else { 0.0 };
+    // whole length dimly (other spotlight modes when F7 asks); the bright footprint alone charges
+    // plankton.
+    let lane = settings.beam_lane || matches!(world.rules, crate::sim::Rules::SpiralVoyage(_));
+    params.beam_lane = if lane { 1.0 } else { 0.0 };
     if world.beam_active() {
         match session.view_footprint().unwrap_or_else(|| world.footprint()) {
             Footprint::Spot { bearing, half_angle, r_min, r_max } => {
