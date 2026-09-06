@@ -57,6 +57,7 @@ impl KeyScript {
 fn parse_key(name: &str) -> Option<KeyCode> {
     Some(match name {
         "Enter" => KeyCode::Enter,
+        "NumpadEnter" => KeyCode::NumpadEnter,
         "Escape" => KeyCode::Escape,
         "Space" => KeyCode::Space,
         "ArrowUp" => KeyCode::ArrowUp,

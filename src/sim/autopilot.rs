@@ -15,6 +15,32 @@ use glam::Vec2;
 use std::collections::HashMap;
 use std::f32::consts::TAU;
 
+/// Scouting sweep: a keeper who does not know the map must read the water ahead even while a ship
+/// is under the light, so the beam leaves the burning patch for a moment to scan up the lane and
+/// across it. The light and the seconds it costs are the mode's intended friction. Modes 1 and 4.
+const SCOUT_SECONDS: f32 = 1.8;
+/// Quiet time between sweeps.
+const SCOUT_PERIOD: f32 = 5.0;
+/// How far across the lane a sweep looks, at its widest.
+const SCOUT_ARC: f32 = 0.8;
+/// How far up the route a sweep looks, in guidance lookaheads.
+const SCOUT_LOOKAHEADS: f32 = 1.6;
+/// How much farther out a sweep reaches, as a fraction of the looked-at point's radius.
+const SCOUT_REACH: f32 = 0.25;
+
+/// The point on `route` about `distance` farther along than `from`.
+fn look_ahead(route: &[Vec2], from: Vec2, distance: f32) -> Option<Vec2> {
+    let start = route.iter().enumerate().min_by(|a, b| a.1.distance(from).total_cmp(&b.1.distance(from)))?.0;
+    let mut walked = 0.0;
+    for pair in route[start..].windows(2) {
+        walked += pair[0].distance(pair[1]);
+        if walked >= distance {
+            return Some(pair[1]);
+        }
+    }
+    route.last().copied()
+}
+
 #[derive(Debug)]
 pub struct Keeper {
     /// Per-vessel route points from the approach to the harbor (Night Watch, Mutable Sea).
@@ -28,6 +54,14 @@ pub struct Keeper {
     /// World Weaver plan: (sector, world) copies in order.
     pub plan: Vec<(usize, u8)>,
     plan_index: usize,
+    /// Sim time the current scouting sweep ends, and the earliest time the next may begin.
+    scout_until: f32,
+    scout_next: f32,
+    /// Side of the trail the next sweep looks toward; alternates.
+    scout_side: f32,
+    /// Whether the keeper spends light scanning the water it has not read yet. On for play and
+    /// the demo; the scenario tests turn it off to measure the level rather than the friction.
+    pub scouting: bool,
 }
 
 impl Keeper {
@@ -47,7 +81,18 @@ impl Keeper {
                 _ => Vec::new(),
             },
             plan_index: 0,
+            scout_until: 0.0,
+            scout_next: SCOUT_PERIOD,
+            scout_side: 1.0,
+            scouting: true,
         }
+    }
+
+    /// A keeper that never leaves the trail to look around.
+    #[cfg(test)]
+    pub fn without_scouting(mut self) -> Self {
+        self.scouting = false;
+        self
     }
 
     /// Route point a ship can actually see and that still needs light.
@@ -106,6 +151,36 @@ impl Keeper {
         }
         self.focus = best.map(|(_, id, _)| id);
         best.map(|(_, _, p)| p)
+    }
+
+    /// The point the beam should actually aim at: the burning trail point, or — while a sweep
+    /// runs — a look up the route and across its width. The sweep begins and ends on the trail
+    /// point, so the ship under the light is never left in the dark mid-turn.
+    ///
+    /// The sweep is taken on a plain cadence, whatever the trail needs. Reading unknown water
+    /// while a ship is under the light is the choice the mode asks of a player, so the keeper
+    /// pays for it in the same coin: light spent away from the trail, and seconds the ship sails
+    /// on its last heading.
+    fn scouted(&mut self, w: &World, aim: Vec2, ahead: Option<Vec2>) -> Vec2 {
+        if !self.scouting {
+            return aim;
+        }
+        let now = w.sea.time;
+        if now >= self.scout_until {
+            if now < self.scout_next {
+                return aim;
+            }
+            self.scout_until = now + SCOUT_SECONDS;
+            self.scout_next = self.scout_until + SCOUT_PERIOD;
+            self.scout_side = -self.scout_side;
+        }
+        let Some(ahead) = ahead else { return aim };
+        // Out and back over the sweep: farthest halfway through, exactly on the trail at both ends.
+        let swing = ((1.0 - (self.scout_until - now) / SCOUT_SECONDS).clamp(0.0, 1.0) * std::f32::consts::PI).sin();
+        let looked = aim.lerp(ahead, swing);
+        let t = &w.sea.tuning;
+        let reach = (looked.length() * (1.0 + SCOUT_REACH * swing)).clamp(t.beam_min_range(), t.beam_max_range());
+        dir(bearing_of(looked) + self.scout_side * SCOUT_ARC * swing) * reach
     }
 
     pub fn input(&mut self, w: &World) -> Input {
@@ -182,13 +257,16 @@ impl Keeper {
                         continue;
                     }
                     let point = point.or_else(|| window.last().copied()).unwrap();
-                    target = Some((winding_in_world(world, bearing_of(point)), point));
+                    target = Some((world, point));
                     break;
                 }
-                let Some((target_winding, point)) = target else {
+                let Some((world, point)) = target else {
                     return Input::default();
                 };
-                let d = target_winding - w.sea.beam.winding;
+                let lookahead = w.sea.tuning.ship_length * w.sea.tuning.guidance_lookahead_lengths;
+                let ahead = look_ahead(&self.world_routes[world], point, lookahead * SCOUT_LOOKAHEADS);
+                let point = self.scouted(w, point, ahead);
+                let d = winding_in_world(world, bearing_of(point)) - w.sea.beam.winding;
                 let d_range = point.length() - w.sea.beam.range;
                 Input {
                     rotate: if d.abs() > 0.02 { d.signum() } else { 0.0 },
@@ -197,12 +275,18 @@ impl Keeper {
                 }
             }
             Rules::NightWatch(_) => {
+                // A predator closing on a hull owns the keeper's whole attention; no sightseeing.
                 if let Some(decoy) = predator_decoy(w) {
-                    aim_at(w, decoy)
-                } else {
-                    let Some(aim) = self.aim_point(w) else { return Input::default() };
-                    aim_at(w, aim)
+                    return aim_at(w, decoy);
                 }
+                let Some(aim) = self.aim_point(w) else { return Input::default() };
+                let t = &w.sea.tuning;
+                let ahead =
+                    self.focus.and_then(|id| w.sea.entity(id)).and_then(|ship| self.routes.get(ship.name)).and_then(
+                        |route| look_ahead(route, aim, t.ship_length * t.guidance_lookahead_lengths * SCOUT_LOOKAHEADS),
+                    );
+                let aim = self.scouted(w, aim, ahead);
+                aim_at(w, aim)
             }
             _ => {
                 let Some(aim) = self.aim_point(w) else { return Input::default() };

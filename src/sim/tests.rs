@@ -97,9 +97,39 @@ fn night_watch_unguided_ships_do_not_find_harbor() {
     assert!(o.rescued <= 1, "{o:?}");
 }
 
+/// The demo keeper reads water it has not seen even while a ship is under the light, so over a
+/// night it lights noticeably more of the sea than a keeper who only ever paints the trail. The
+/// light it spends looking is the mode's intended friction, not a bug.
+#[test]
+fn scouting_keeper_reads_more_of_the_sea_than_one_who_only_paints_the_trail() {
+    fn water_read(scouting: bool) -> usize {
+        let mut bot = Keeper::for_mode(Mode::NightWatch);
+        if !scouting {
+            bot = bot.without_scouting();
+        }
+        let mut w = World::new(Mode::NightWatch, Tuning::default());
+        skip_dusk(&mut w);
+        let mut lit = vec![false; w.sea.charge.charge.len()];
+        for _ in 0..(60.0 * 90.0) as usize {
+            let input = bot.input(&w);
+            w.step(input, DT);
+            for (cell, charge) in lit.iter_mut().zip(&w.sea.charge.charge) {
+                *cell |= *charge > 0.5;
+            }
+        }
+        lit.iter().filter(|cell| **cell).count()
+    }
+
+    let scouting = water_read(true);
+    let attentive = water_read(false);
+    assert!(scouting > attentive * 11 / 10, "scouting read {scouting} cells, trail-only keeper {attentive}");
+}
+
 #[test]
 fn night_watch_attentive_keeper_rescues_target() {
-    let mut bot = Keeper::for_mode(Mode::NightWatch);
+    // The level itself is the subject here; the demo keeper's scouting friction is measured
+    // separately, in `scouting_keeper_leaves_the_trail_to_read_the_water`.
+    let mut bot = Keeper::for_mode(Mode::NightWatch).without_scouting();
     let mut w = World::new(Mode::NightWatch, Tuning::default());
     let mut losses = Vec::new();
     for _ in 0..((w.night_length.unwrap() + 120.0) * 60.0) as usize {
@@ -557,7 +587,7 @@ fn spiral_predators_take_the_ship_only_in_their_own_world() {
 
 #[test]
 fn spiral_keeper_brings_the_ship_through_four_worlds_to_harbor() {
-    let mut bot = Keeper::for_mode(Mode::SpiralVoyage);
+    let mut bot = Keeper::for_mode(Mode::SpiralVoyage).without_scouting();
     // The authored routes are the subject here; the worlds' predators are exercised separately.
     let mut tuning = Tuning::default();
     tuning.spiral_monsters = false;

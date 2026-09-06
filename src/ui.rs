@@ -9,14 +9,22 @@ const INK: Color = Color::srgb(0.88, 0.86, 0.8);
 const DIM: Color = Color::srgb(0.55, 0.58, 0.62);
 const WARM: Color = Color::srgb(1.0, 0.8, 0.5);
 const PANEL: Color = Color::srgba(0.02, 0.03, 0.05, 0.78);
+/// Background of the highlighted menu row.
+const ROW_LIT: Color = Color::srgba(0.10, 0.15, 0.22, 0.9);
+const ROW_DARK: Color = Color::srgba(0.04, 0.06, 0.09, 0.55);
 
 #[derive(Resource, Default)]
 struct MenuState {
     selected: usize,
 }
 
+/// One selectable row; the caret and label carry the same index so all three update together.
 #[derive(Component)]
 struct MenuEntry(usize);
+#[derive(Component)]
+struct MenuCaret(usize);
+#[derive(Component)]
+struct MenuLabel(usize);
 
 #[derive(Component)]
 struct HudTitle;
@@ -93,31 +101,49 @@ fn spawn_menu(mut commands: Commands, menu: Res<MenuState>) {
                 Text::new("to the saviour gods, on behalf of those who sail the seas"),
                 font(20.0),
                 TextColor(DIM),
-                Node {
-                    margin: UiRect::bottom(px(34)),
-                    ..default()
-                },
+                Node { margin: UiRect::bottom(px(34)), ..default() },
+            ));
+            root.spawn((
+                Text::new("Choose a scenario"),
+                font(22.0),
+                TextColor(WARM),
+                Node { margin: UiRect::bottom(px(10)), ..default() },
             ));
             for (i, mode) in Mode::MENU.iter().enumerate() {
+                let selected = i == menu.selected;
                 root.spawn((
                     MenuEntry(i),
-                    Text::new(format!("{}   {}", mode.title(), mode.tagline())),
-                    font(26.0),
-                    TextColor(if i == menu.selected { INK } else { DIM }),
                     Node {
-                        margin: UiRect::vertical(px(6)),
+                        width: px(880),
+                        column_gap: px(14),
+                        padding: UiRect::axes(px(20), px(12)),
+                        margin: UiRect::vertical(px(5)),
+                        align_items: AlignItems::Center,
                         ..default()
                     },
-                ));
+                    BackgroundColor(if selected { ROW_LIT } else { ROW_DARK }),
+                ))
+                .with_children(|row| {
+                    row.spawn((MenuCaret(i), Text::new(if selected { ">" } else { " " }), font(26.0), TextColor(WARM)));
+                    row.spawn((
+                        MenuLabel(i),
+                        Text::new(format!("{}   {}", mode.title(), mode.tagline())),
+                        font(26.0),
+                        TextColor(if selected { INK } else { DIM }),
+                    ));
+                });
             }
             root.spawn((
-                Text::new("Up / Down choose    Enter begin    D watch a demo    [ ] brightness    F4 constant-speed rotation    F3 debug overlay    F6 skip to dawn"),
+                Text::new("Up / Down choose    Enter or Space begin    D watch a demo"),
+                font(18.0),
+                TextColor(INK),
+                Node { margin: UiRect::top(px(26)), ..default() },
+            ));
+            root.spawn((
+                Text::new("[ ] brightness    F4 constant-speed rotation    F3 debug overlay    F6 skip to dawn"),
                 font(16.0),
                 TextColor(DIM),
-                Node {
-                    margin: UiRect::top(px(40)),
-                    ..default()
-                },
+                Node { margin: UiRect::top(px(8)), ..default() },
             ));
         });
 }
@@ -125,7 +151,9 @@ fn spawn_menu(mut commands: Commands, menu: Res<MenuState>) {
 fn menu_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut menu: ResMut<MenuState>,
-    mut entries: Query<(&MenuEntry, &mut TextColor)>,
+    mut rows: Query<(&MenuEntry, &mut BackgroundColor)>,
+    mut carets: Query<(&MenuCaret, &mut Text), Without<MenuLabel>>,
+    mut labels: Query<(&MenuLabel, &mut TextColor)>,
     mut session: ResMut<Session>,
     mut settings: ResMut<Settings>,
     mut next: ResMut<NextState<AppState>>,
@@ -137,10 +165,21 @@ fn menu_input(
     if keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyW) {
         menu.selected = (menu.selected + n - 1) % n;
     }
-    for (entry, mut color) in &mut entries {
-        color.0 = if entry.0 == menu.selected { INK } else { DIM };
+    for (row, mut background) in &mut rows {
+        background.0 = if row.0 == menu.selected { ROW_LIT } else { ROW_DARK };
     }
-    let begin = keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space);
+    for (caret, mut text) in &mut carets {
+        let want = if caret.0 == menu.selected { ">" } else { " " };
+        if text.0 != want {
+            text.0 = want.to_string();
+        }
+    }
+    for (label, mut color) in &mut labels {
+        color.0 = if label.0 == menu.selected { INK } else { DIM };
+    }
+    let begin = keys.just_pressed(KeyCode::Enter)
+        || keys.just_pressed(KeyCode::NumpadEnter)
+        || keys.just_pressed(KeyCode::Space);
     // Demo: the scripted keeper plays the selected scenario; any beam input takes over.
     let demo = keys.just_pressed(KeyCode::KeyD);
     if begin || demo {
