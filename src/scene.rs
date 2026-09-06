@@ -147,17 +147,18 @@ fn setup_scene(
         Bloom { intensity: 0.22, ..Bloom::NATURAL },
         Exposure { ev100: BASE_EV100 },
         VolumetricFog {
-            // A distant moon tint illuminates the fog itself without adding scene light that
-            // would reveal islands.
-            ambient_color: Color::srgb(0.52, 0.62, 0.82),
-            ambient_intensity: 0.25,
+            // Bevy's ambient term is applied over the whole fog volume regardless of density, so
+            // it draws the volume's box on screen. The faint moonlit mist comes from the sky
+            // light below instead, which scatters only where the density texture has fog.
+            ambient_intensity: 0.0,
             ..default()
         },
         Msaa::Sample4,
     ));
 
-    // Sky light: moon by night, warming and brightening into the sun at first light. Fog uses the
-    // camera's separate ambient tint so this scene light can remain too faint to reveal islands.
+    // Sky light: moon by night, warming and brightening into the sun at first light. It is far
+    // too faint to pick out islands, but the fog scatters it, so the sea keeps a trace of mist
+    // everywhere the density texture has any.
     commands.spawn((
         SkyLight,
         DirectionalLight {
@@ -166,6 +167,7 @@ fn setup_scene(
             shadow_maps_enabled: true,
             ..default()
         },
+        VolumetricLight,
         // The fog is only lit inside the shadow cascade, so it must cover the whole sea.
         bevy::light::CascadeShadowConfigBuilder {
             num_cascades: 2,
@@ -638,9 +640,10 @@ fn update_beam_lights(
 
     for (mut tf, mut light) in &mut fog_beam {
         *tf = Transform::from_xyz(0.0, 14.6, 0.0).looking_at(to_world_h(center, 0.0), Vec3::Y);
+        // Half the cone it used to light: a narrower halo hugging the beam rather than a wash.
         let half = match fp {
-            Footprint::Spot { half_angle, .. } => half_angle * 3.0,
-            Footprint::Sector { angle_start, angle_end, .. } => (angle_end - angle_start) * 0.5,
+            Footprint::Spot { half_angle, .. } => half_angle * 1.5,
+            Footprint::Sector { angle_start, angle_end, .. } => (angle_end - angle_start) * 0.25,
         };
         light.outer_angle = half.min(1.2);
         light.inner_angle = 0.0;

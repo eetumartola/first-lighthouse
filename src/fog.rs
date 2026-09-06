@@ -118,10 +118,10 @@ fn clearance_profile(u: f32) -> f32 {
     1.0 - shoulder * shoulder * (3.0 - 2.0 * shoulder)
 }
 
-/// Fully parted fog reaches zero local density exactly on the beam centerline; untouched fog
-/// remains at full density.
+/// Parted fog keeps a fifth of its local density inside the beam: the lit lane has to hold enough
+/// mist to glow. Untouched fog stays at full density.
 fn fog_density_multiplier(clearance: f32) -> f32 {
-    1.0 - clearance.clamp(0.0, 1.0)
+    1.0 - 0.8 * clearance.clamp(0.0, 1.0)
 }
 
 fn update(
@@ -216,7 +216,9 @@ fn update(
         }
     }
     for mut volume in &mut volumes {
-        volume.density_factor = 0.35 * density;
+        // A quarter of the density the volume carried before: the sea reads as thin mist, not
+        // cloud, and the beam still finds something to light.
+        volume.density_factor = 0.0875 * density;
     }
 }
 
@@ -255,13 +257,13 @@ mod tests {
     }
 
     #[test]
-    fn fog_opening_fades_gradually_from_a_clear_center() {
+    fn fog_opening_fades_gradually_and_keeps_the_lane_lightly_misted() {
         let center = fog_density_multiplier(clearance_profile(0.0));
         let middle = fog_density_multiplier(clearance_profile(0.5));
         let edge = fog_density_multiplier(clearance_profile(1.0));
 
-        assert!(center.abs() < f32::EPSILON);
-        assert!(fog_density_multiplier(clearance_profile(0.4)).abs() < f32::EPSILON);
+        assert!((center - 0.2).abs() < 1e-6);
+        assert!((fog_density_multiplier(clearance_profile(0.4)) - 0.2).abs() < 1e-6);
         assert!(center < middle && middle < edge);
         assert!((edge - 1.0).abs() < f32::EPSILON);
 
