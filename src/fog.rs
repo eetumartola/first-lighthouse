@@ -70,8 +70,8 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     });
     let image = images.add(image);
 
-    // Bevy attenuates in-scattered light over the volume's bounding radius, so a scene this large
-    // needs a strong artistic light multiplier.
+    // Keep ambient mist subordinate to the lighthouse; the dedicated beam light supplies the
+    // dramatic in-scattering.
     commands.spawn((
         SeaFog,
         FogVolume {
@@ -80,7 +80,7 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             absorption: 0.05,
             scattering: 0.9,
             scattering_asymmetry: 0.3,
-            light_intensity: 2500.0,
+            light_intensity: 600.0,
             fog_color: Color::srgb(0.75, 0.85, 1.0),
             ..default()
         },
@@ -94,6 +94,17 @@ fn cell_sim(x: usize, z: usize) -> glam::Vec2 {
     let u = (x as f32 + 0.5) / N as f32 - 0.5;
     let w = (z as f32 + 0.5) / N as f32 - 0.5;
     glam::Vec2::new(u * EXTENT, -w * EXTENT)
+}
+
+/// Select the fog-opening shoulder on the camera-near or camera-far side. The fixed gameplay
+/// camera is south of the sea, so the shoulder whose direction has lower simulation Y is nearer.
+fn camera_side_half_width(bearing: f32, delta: f32, near_half: f32, far_half: f32) -> f32 {
+    let positive_is_near = crate::sim::geom::dir(bearing + far_half).y < crate::sim::geom::dir(bearing - far_half).y;
+    if (delta >= 0.0) == positive_is_near {
+        near_half
+    } else {
+        far_half
+    }
 }
 
 fn update(
@@ -124,12 +135,13 @@ fn update(
 
     // Clearance: the beam's whole lane parts the fog where it lights the water; everywhere it does
     // not, the fog closes back.
-    let (bearing, half_angle) = match footprint {
-        Some(Footprint::Spot { bearing, half_angle, .. }) => (bearing, half_angle * 8.0),
+    let (bearing, near_half, far_half) = match footprint {
+        Some(Footprint::Spot { bearing, half_angle, .. }) => (bearing, half_angle * 4.5, half_angle * 8.0),
         Some(Footprint::Sector { angle_start, angle_end, .. }) => {
-            ((angle_start + angle_end) * 0.5, (angle_end - angle_start) * 0.5)
+            let half = (angle_end - angle_start) * 0.5;
+            ((angle_start + angle_end) * 0.5, half, half)
         }
-        None => (0.0, -1.0),
+        None => (0.0, -1.0, -1.0),
     };
     let close = dt / CLOSE_SECONDS;
     for z in 0..N {
@@ -137,11 +149,16 @@ fn update(
             let p = cell_sim(x, z);
             let r = p.length();
             let mut c = state.clearance[z * N + x] - close;
-            if half_angle > 0.0 && r > 6.0 && r < EXTENT * 0.5 {
-                let d = crate::sim::geom::angle_delta(bearing, crate::sim::geom::bearing_of(p)).abs();
-                // Soft-edged wedge along the centreline; the lane keeps a quarter of the fog.
-                let part = 1.0 - (d / half_angle).clamp(0.0, 1.0);
-                c = c.max(0.75 * part * part);
+            if near_half > 0.0 && r > 6.0 && r < EXTENT * 0.5 {
+                let point_bearing = crate::sim::geom::bearing_of(p);
+                let d = crate::sim::geom::angle_delta(bearing, point_bearing);
+                let half = camera_side_half_width(bearing, d, near_half, far_half);
+                // Broad clear core with feathered shoulders: the spotlight and its water patch
+                // cannot be swallowed by illuminated mist.
+                let u = (d.abs() / half).clamp(0.0, 1.0);
+                let shoulder = ((u - 0.55) / 0.45).clamp(0.0, 1.0);
+                let part = 1.0 - shoulder * shoulder * (3.0 - 2.0 * shoulder);
+                c = c.max(part);
             }
             state.clearance[z * N + x] = c.clamp(0.0, 1.0);
         }
@@ -174,6 +191,28 @@ fn update(
         }
     }
     for mut volume in &mut volumes {
-        volume.density_factor = 0.8 * density;
+        volume.density_factor = 0.35 * density;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f32::consts::FRAC_PI_2;
+
+    #[test]
+    fn fog_opening_is_half_current_width_on_camera_side_and_prior_width_beyond() {
+        let beam_half = 0.1;
+        let near = beam_half * 4.5;
+        let far = beam_half * 8.0;
+
+        // Facing east, the clockwise (positive) shoulder points south toward the camera.
+        assert_eq!(camera_side_half_width(FRAC_PI_2, 0.1, near, far), near);
+        assert_eq!(camera_side_half_width(FRAC_PI_2, -0.1, near, far), far);
+        // Facing west, the counter-clockwise (negative) shoulder points south.
+        assert_eq!(camera_side_half_width(3.0 * FRAC_PI_2, -0.1, near, far), near);
+        assert_eq!(camera_side_half_width(3.0 * FRAC_PI_2, 0.1, near, far), far);
+        assert!((near / (beam_half * 9.0) - 0.5).abs() < f32::EPSILON);
+        assert!((far / beam_half - 8.0).abs() < f32::EPSILON);
     }
 }

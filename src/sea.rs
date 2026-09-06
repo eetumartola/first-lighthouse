@@ -107,7 +107,7 @@ fn spawn_sea(
     });
 
     commands.spawn((
-        Mesh3d(meshes.add(Circle::new(tuning.sea_radius * 1.6).mesh().resolution(160))),
+        Mesh3d(meshes.add(Circle::new(tuning.sea_radius * 10.0).mesh().resolution(320))),
         MeshMaterial3d(material.clone()),
         Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
         Name::new("Sea"),

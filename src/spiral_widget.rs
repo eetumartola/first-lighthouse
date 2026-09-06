@@ -196,7 +196,7 @@ fn update(
         cam.viewport = Some(Viewport { physical_position: pos, physical_size: size, ..default() });
     }
 
-    let inspected = world.inspected_world();
+    let inspected = sv.beam_world(&world.sea);
     for (turn, mut material) in &mut turns {
         let want = if turn.0 == inspected { &mats.lit } else { &mats.dim };
         if material.0 != *want {

@@ -40,7 +40,7 @@ impl Keeper {
                 Mode::SpiralVoyage => spiral_world_routes(),
                 _ => Vec::new(),
             },
-            target_charge: if mode == Mode::SpiralVoyage { 2.0 } else { 4.0 },
+            target_charge: 4.0,
             focus: None,
             plan: match mode {
                 Mode::WorldWeaver => world_weaver_solution(),
@@ -426,7 +426,7 @@ fn extend_route(route: &mut Vec<Vec2>, leg: Vec<Vec2>) {
 fn straighten(route: Vec<Vec2>, land: &[super::geom::Circle], t: &super::tuning::Tuning, clearance: f32) -> Vec<Vec2> {
     let allowed = |a: Vec2, b: Vec2| {
         let d = angle_delta(bearing_of(a), bearing_of(b));
-        (-0.05..=std::f32::consts::FRAC_PI_2).contains(&d) && route::segment_clear(a, b, land, t.sea_radius, clearance)
+        (0.0..=std::f32::consts::FRAC_PI_2).contains(&d) && route::segment_clear(a, b, land, t.sea_radius, clearance)
     };
     let mut sparse = vec![route[0]];
     let mut i = 0;

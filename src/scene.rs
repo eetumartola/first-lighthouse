@@ -258,12 +258,11 @@ fn setup_scene(
         VolumetricLight,
         Transform::from_xyz(0.0, 14.6, 0.0).looking_at(Vec3::new(0.0, 0.0, -50.0), Vec3::Y),
     ));
-    // Moonlight on the fog: a wide, weak volumetric spot from high above, so the mist reads as a
-    // pale blanket without the fog volume's box ever showing.
+    // Faint overhead fill keeps the fog readable without competing with the lighthouse beam.
     commands.spawn((
         SpotLight {
-            color: Color::srgb(0.62, 0.72, 0.95),
-            intensity: 900_000.0,
+            color: Color::srgb(0.52, 0.62, 0.82),
+            intensity: 100_000.0,
             range: 500.0,
             shadow_maps_enabled: true,
             inner_angle: 0.1,
@@ -577,8 +576,7 @@ fn spawn_land(
             let center = models::cluster_center(&cluster);
             // Drawn a touch thinner than the hull-blocking circles: the water reads as passable
             // right up to the visible rock.
-            let drawn: Vec<sim::Circle> =
-                cluster.iter().map(|c| sim::Circle::new(c.center, c.radius * 0.9)).collect();
+            let drawn: Vec<sim::Circle> = cluster.iter().map(|c| sim::Circle::new(c.center, c.radius * 0.9)).collect();
             let entity = commands
                 .spawn((
                     Mesh3d(meshes.add(models::island(&drawn, center, None))),

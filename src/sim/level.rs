@@ -36,7 +36,8 @@ pub fn parse(text: &str, island: f32, sea: f32) -> Vec<Vec<Circle>> {
     let width = lines.iter().map(|line| line.chars().count()).max().unwrap_or(0);
     let worlds = width.div_ceil(COLUMNS).max(1);
     let band = (sea - island) / rows as f32;
-    let radius = band * 0.45;
+    // Slightly under half a band leaves visibly navigable water between neighbouring reefs.
+    let radius = band * 0.405;
     let mut out = vec![Vec::new(); worlds];
 
     for (row, line) in lines.iter().take(rows).enumerate() {
