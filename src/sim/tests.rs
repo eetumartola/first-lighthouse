@@ -169,9 +169,10 @@ fn predator_diverted_by_a_brighter_decoy_leaves_the_route_alone() {
 // ---------------------------------------------------------------- Mutable Sea (suspended)
 
 #[test]
-fn mutable_sea_is_hidden_from_the_menu_but_its_rules_do_not_run_elsewhere() {
+fn suspended_modes_are_hidden_from_the_menu_but_their_rules_do_not_run_elsewhere() {
     assert!(!Mode::MENU.contains(&Mode::MutableSea));
-    assert_eq!(Mode::MENU.len(), 3);
+    assert!(!Mode::MENU.contains(&Mode::WorldWeaver));
+    assert_eq!(Mode::MENU.len(), 2);
     for mode in Mode::MENU {
         let w = World::new(mode, Tuning::default());
         assert!(w.sea.entities.iter().all(|e| e.mutable.is_none()), "{mode:?} carries transformation timers");
@@ -523,9 +524,44 @@ fn spiral_seam_sampling_reads_the_neighbouring_world() {
 }
 
 #[test]
+fn spiral_predators_take_the_ship_only_in_their_own_world() {
+    let mut w = World::new(Mode::SpiralVoyage, Tuning::default());
+    skip_dusk(&mut w);
+    let ship = spiral(&w).ship.unwrap();
+    let creatures = spiral(&w).creatures.clone();
+    let own = creatures[0].expect("World 1 keeps a predator");
+    let neighbour = creatures[1].expect("World 2 keeps a predator");
+
+    // World 2's predator on the hull: the ship sees World 1 water there, so nothing touches it.
+    let hull = w.sea.entity(ship).unwrap().pos;
+    w.sea.entity_mut(neighbour).unwrap().pos = hull;
+    w.step(Input::default(), DT);
+    assert!(w.sea.entity(ship).unwrap().is_active(), "a neighbouring world's predator took the ship");
+
+    // World 1's own predator on the hull takes it.
+    let hull = w.sea.entity(ship).unwrap().pos;
+    w.sea.entity_mut(own).unwrap().pos = hull;
+    w.step(Input::default(), DT);
+    assert_eq!(w.sea.entity(ship).unwrap().status, Status::Sunk);
+    // Losing the ship ends the voyage; the result card comes after the dawn that follows.
+    for _ in 0..(60.0 * (w.tuning().dawn_seconds + 1.0)) as usize {
+        if w.outcome.is_some() {
+            break;
+        }
+        w.step(Input::default(), DT);
+    }
+    let o = w.outcome.as_ref().expect("the voyage never resolved");
+    assert!(!o.success, "{o:?}");
+    assert!(o.headline.contains("took the Wayfarer"), "{o:?}");
+}
+
+#[test]
 fn spiral_keeper_brings_the_ship_through_four_worlds_to_harbor() {
     let mut bot = Keeper::for_mode(Mode::SpiralVoyage);
-    let mut w = World::new(Mode::SpiralVoyage, Tuning::default());
+    // The authored routes are the subject here; the worlds' predators are exercised separately.
+    let mut tuning = Tuning::default();
+    tuning.spiral_monsters = false;
+    let mut w = World::new(Mode::SpiralVoyage, tuning);
     let mut crossings = Vec::new();
     let mut elapsed = 0.0;
     let mut grounding = None;

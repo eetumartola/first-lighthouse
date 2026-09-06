@@ -122,6 +122,8 @@ pub struct Tuning {
     /// Ship speed multiplier for the four-world voyage; its broad authored routes support a
     /// slightly faster crossing while retaining the same guidance and inertia rules.
     pub spiral_ship_speed_factor: f32,
+    /// One plankton-eating predator per world in the four-world voyage.
+    pub spiral_monsters: bool,
 }
 
 impl Default for Tuning {
@@ -199,6 +201,7 @@ impl Default for Tuning {
 
             spiral_worlds: 4,
             spiral_ship_speed_factor: 1.2,
+            spiral_monsters: true,
         }
     }
 }

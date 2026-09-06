@@ -43,8 +43,9 @@ impl Mode {
     /// Every mode, including the suspended one (tests).
     #[cfg(test)]
     pub const ALL: [Mode; 4] = [Mode::NightWatch, Mode::MutableSea, Mode::WorldWeaver, Mode::SpiralVoyage];
-    /// What the player can choose.
-    pub const MENU: [Mode; 3] = [Mode::NightWatch, Mode::WorldWeaver, Mode::SpiralVoyage];
+    /// What the player can choose. Mutable Sea and World Weaver are suspended: their rules still
+    /// run, but neither is offered.
+    pub const MENU: [Mode; 2] = [Mode::NightWatch, Mode::SpiralVoyage];
 
     pub fn title(self) -> &'static str {
         match self {

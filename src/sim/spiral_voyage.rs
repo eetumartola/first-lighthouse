@@ -28,6 +28,7 @@ pub struct SpiralWorld {
 pub enum VoyageEnd {
     Arrived,
     Grounded(Vec2),
+    Taken(Vec2),
 }
 
 /// Where a spiral position resolves for an observer at `winding`/`bearing`: the world of the
@@ -63,6 +64,9 @@ pub struct SpiralVoyage {
     pub ship_world: usize,
     pub start: Vec2,
     pub start_heading: f32,
+    /// One predator per world, in the same order as `worlds`; `None` where a world has no open
+    /// water for one.
+    pub creatures: Vec<Option<EntityId>>,
     pub end: Option<VoyageEnd>,
 }
 
@@ -140,6 +144,7 @@ impl SpiralVoyage {
             ship_world: 0,
             start: islands::polar(300.0, 40.0),
             start_heading: 60f32.to_radians(),
+            creatures: Vec::new(),
             end: None,
         }
     }
@@ -176,6 +181,41 @@ impl SpiralVoyage {
     }
 }
 
+/// Names of the predators, one per world.
+const CREATURE_NAMES: [&str; 4] = ["Leviathan", "Hafgufa", "Nixie", "Kraken"];
+
+/// Open water for a world's predator: a deterministic clockwise scan from the world's own
+/// offset, so each world's monster starts in different water and never inside its own rocks.
+fn creature_spawn(rocks: &[Circle], world: usize, t: &Tuning) -> Option<(Vec2, f32)> {
+    let clear = t.creature_radius + t.cell_size;
+    for step in 0..24 {
+        let deg = (world as f32 * 90.0 + step as f32 * 15.0) % 360.0;
+        for fraction in [0.62, 0.78, 0.46] {
+            let pos = islands::polar(deg, t.sea_radius * fraction);
+            if rocks.iter().all(|rock| pos.distance(rock.center) > rock.radius + clear) {
+                // Facing the lighthouse: the water it hunts lies inward along the beam.
+                return Some((pos, (deg + 180.0).rem_euclid(360.0).to_radians()));
+            }
+        }
+    }
+    None
+}
+
+/// Surface the predator of the ship's current world briefly, so entering a world announces the
+/// thing that lives in it instead of revealing it only on contact.
+fn announce_creature(sv: &SpiralVoyage, sea: &mut Sea) {
+    let Some(id) = sv.creatures.get(sv.ship_world).copied().flatten() else { return };
+    let seconds = sea.tuning.ship_arrival_reveal_seconds;
+    let now = sea.time;
+    let Some(pos) = sea.entity_mut(id).map(|e| {
+        e.surface(now, seconds);
+        e.pos
+    }) else {
+        return;
+    };
+    sea.events.push(Event::CreatureAppears { id, pos });
+}
+
 /// Spawn the ship in World 1 and point the beam at it.
 pub fn populate(sv: &mut SpiralVoyage, sea: &mut Sea) {
     let id = sea.spawn("Wayfarer", Form::Ship, sv.start, sv.start_heading);
@@ -188,6 +228,23 @@ pub fn populate(sv: &mut SpiralVoyage, sea: &mut Sea) {
     }
     sea.beam.winding = start_winding;
     sea.beam.range = sv.start.length().clamp(sea.tuning.beam_min_range(), sea.tuning.beam_max_range());
+
+    // Every world keeps its own predator: hunting its own plankton, dangerous only where the
+    // ship's view of the spiral resolves it into the world it belongs to.
+    sv.creatures = vec![None; sv.worlds.len()];
+    if sea.tuning.spiral_monsters {
+        let t = sea.tuning.clone();
+        for world in 0..sv.worlds.len() {
+            let Some((pos, heading)) = creature_spawn(&sv.worlds[world].rocks, world, &t) else { continue };
+            let name = CREATURE_NAMES[world % CREATURE_NAMES.len()];
+            let creature = sea.spawn(name, Form::Creature, pos, heading);
+            if let Some(e) = sea.entity_mut(creature) {
+                e.winding = winding_in_world(world, bearing_of(pos));
+            }
+            sv.creatures[world] = Some(creature);
+        }
+        announce_creature(sv, sea);
+    }
     let view = sv.perspective(sea);
     sv.refresh_view(view);
 }
@@ -229,6 +286,7 @@ pub fn step(sv: &mut SpiralVoyage, sea: &mut Sea, footprint: &Footprint, dt: f32
         voyage_tuning.ship_speed *= t.spiral_ship_speed_factor;
         steering::steer_ship(&mut sea.entities[idx], &waters, &voyage_tuning, dt);
     }
+    let mut crossed = false;
     let ship = &mut sea.entities[idx];
     let new_winding = old_winding + angle_delta(bearing_of(old_pos), bearing_of(ship.pos));
     let max_winding = SEAM + n as f32 * TAU;
@@ -246,12 +304,17 @@ pub fn step(sv: &mut SpiralVoyage, sea: &mut Sea, footprint: &Footprint, dt: f32
         if new_winding >= upper && sv.ship_world + 1 < n {
             sv.ship_world += 1;
             sea.events.push(Event::ShipCrossed { world: sv.ship_world as u8 });
+            crossed = true;
         } else if new_winding < lower && sv.ship_world > 0 {
             sv.ship_world -= 1;
             sea.events.push(Event::ShipCrossed { world: sv.ship_world as u8 });
+            crossed = true;
         }
     }
     let view = Perspective { winding: ship.winding, bearing: bearing_of(ship.pos), worlds: n };
+    if crossed {
+        announce_creature(sv, sea);
+    }
     rebase_beam(view, sea);
     sv.refresh_view(view);
 
@@ -276,6 +339,25 @@ pub fn step(sv: &mut SpiralVoyage, sea: &mut Sea, footprint: &Footprint, dt: f32
         sea.events.push(Event::Sunk { id: ship_id, pos: hull.center, cause: Cause::Rock });
         return true;
     }
+    // Predators: each hunts the plankton of its own world and takes the ship only while the ship
+    // sees it in that world, exactly as grounding resolves land.
+    for world in 0..sv.worlds.len() {
+        let Some(creature_id) = sv.creatures[world] else { continue };
+        let Some(ci) = sea.entities.iter().position(|e| e.id == creature_id) else { continue };
+        let spiral_world = &mut sv.worlds[world];
+        let creature = &mut sea.entities[ci];
+        steering::steer_predator(creature, &mut spiral_world.charge, &spiral_world.rocks, &t, dt);
+        // A predator belongs to one world: its winding follows its bearing inside that world.
+        creature.winding = winding_in_world(world, bearing_of(creature.pos));
+        let reach = Circle::new(creature.pos, t.creature_contact_radius);
+        if view.world_at(creature.pos) == world && reach.overlaps(&hull) {
+            let at = creature.pos;
+            sea.entities[idx].status = Status::Sunk;
+            sv.end = Some(VoyageEnd::Taken(at));
+            sea.events.push(Event::Sunk { id: ship_id, pos: hull.center, cause: Cause::Creature });
+            return true;
+        }
+    }
     false
 }
 
@@ -286,6 +368,9 @@ pub fn outcome(sv: &SpiralVoyage, sea: &Sea) -> Outcome {
         Some(VoyageEnd::Arrived) => (true, "The Wayfarer came through all four worlds to harbor.".to_string()),
         Some(VoyageEnd::Grounded(at)) => {
             (false, format!("The Wayfarer struck the {} rocks in World {reached}.", compass_word(at)))
+        }
+        Some(VoyageEnd::Taken(at)) => {
+            (false, format!("Something took the Wayfarer in the {} water of World {reached}.", compass_word(at)))
         }
         None => (false, "The voyage did not resolve.".to_string()),
     };
