@@ -19,6 +19,8 @@ pub struct MainCamera;
 
 #[derive(Component)]
 struct SkyLight;
+#[derive(Component)]
+struct SkyDome;
 
 /// Spawned per session and removed when a new session starts.
 #[derive(Component)]
@@ -92,14 +94,16 @@ fn setup_scene(
 
     // Night sky: a dome of scattered stars over a faint horizon glow, unlit so exposure never
     // swallows it. Dawn brightens the world, not the sky texture.
+    let sky_material = materials.add(StandardMaterial {
+        base_color_texture: Some(images.add(sky_image())),
+        unlit: true,
+        cull_mode: None,
+        ..default()
+    });
     commands.spawn((
+        SkyDome,
         Mesh3d(meshes.add(Sphere::new(1400.0).mesh().uv(48, 24))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color_texture: Some(images.add(sky_image())),
-            unlit: true,
-            cull_mode: None,
-            ..default()
-        })),
+        MeshMaterial3d(sky_material),
         Transform::from_xyz(0.0, -60.0, 0.0),
         Name::new("Sky"),
     ));
@@ -652,6 +656,8 @@ fn update_exposure(
     session: Res<Session>,
     mut cams: Query<&mut Exposure, With<MainCamera>>,
     mut sky: Query<(&mut DirectionalLight, &mut Transform), With<SkyLight>>,
+    dome: Query<&MeshMaterial3d<StandardMaterial>, With<SkyDome>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut ambient: ResMut<GlobalAmbientLight>,
 ) {
     let dawn = session.world().map(dawn_amount).unwrap_or(0.0);
@@ -660,19 +666,29 @@ fn update_exposure(
     for mut e in &mut cams {
         e.ev100 = BASE_EV100 - settings.brightness + dawn * 3.6;
     }
+    // A low, amber sun: rock faces toward the east catch it while the shadow sides stay cool.
     let night = LinearRgba::new(0.6, 0.7, 1.0, 1.0);
-    let day = LinearRgba::new(1.0, 0.82, 0.6, 1.0);
+    let day = LinearRgba::new(1.0, 0.66, 0.38, 1.0);
     for (mut light, mut tf) in &mut sky {
-        light.illuminance = 1.2 + dawn * dawn * 4_000.0 + flare * 150.0;
+        light.illuminance = 1.2 + dawn * dawn * 5_000.0 + flare * 150.0;
         let flare_color = LinearRgba::new(1.0, 0.75, 0.45, 1.0);
         light.color = Color::LinearRgba(night.mix(&day, dawn).mix(&flare_color, flare));
         // The sun rises in the east, low and warm.
-        let pos = Vec3::new(-60.0, 120.0, -40.0).lerp(Vec3::new(160.0, 45.0, -20.0), dawn);
+        let pos = Vec3::new(-60.0, 120.0, -40.0).lerp(Vec3::new(160.0, 32.0, -20.0), dawn);
         *tf = Transform::from_translation(pos).looking_at(Vec3::ZERO, Vec3::Y);
     }
-    ambient.brightness = 2.6 + dawn * 300.0 + flare * 60.0;
+    // Ambient stays cool at dawn so the warm sun reads as direction, not a global tint.
+    ambient.brightness = 2.6 + dawn * 220.0 + flare * 60.0;
     ambient.color =
-        Color::LinearRgba(LinearRgba::new(0.5, 0.65, 0.9, 1.0).mix(&LinearRgba::new(0.9, 0.85, 0.8, 1.0), dawn));
+        Color::LinearRgba(LinearRgba::new(0.5, 0.65, 0.9, 1.0).mix(&LinearRgba::new(0.7, 0.78, 0.9, 1.0), dawn));
+    // The star dome pales toward a dawn sky as the exposure drops: a deep blue-grey, not a
+    // daylight sky, so the horizon glow and the sea's rim still read.
+    for handle in &dome {
+        if let Some(mut m) = materials.get_mut(&handle.0) {
+            let k = 1.0 + dawn * 3.5;
+            m.base_color = Color::linear_rgb(k * (1.0 + 0.3 * dawn), k * (1.0 + 0.35 * dawn), k * (1.0 + 0.6 * dawn));
+        }
+    }
 }
 
 /// World Weaver: the lit sector previews its current piece (World 1 shows the assembled result);

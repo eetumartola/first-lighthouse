@@ -463,11 +463,13 @@ fn spawn_result(mut commands: Commands, session: Res<Session>) {
     commands
         .spawn((
             DespawnOnExit(AppState::Result),
+            // Low on the screen: the revealed sea and the lighthouse are the reward image and
+            // should not sit behind the summary.
             Node {
                 position_type: PositionType::Absolute,
                 left: percent(50),
-                top: percent(50),
-                margin: UiRect::new(px(-360), px(0), px(-160), px(0)),
+                bottom: px(56),
+                margin: UiRect::left(px(-360)),
                 ..panel(px(720))
             },
             BackgroundColor(PANEL),
