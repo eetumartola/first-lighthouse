@@ -460,3 +460,53 @@ pub fn tower(levels: &[(f32, f32)], sides: usize) -> Mesh {
     }
     soup.mesh()
 }
+
+/// Flat compass rose lying on the water just outside the playable disc: an outer ring, degree
+/// ticks (cardinals longest), four long cardinal points and four shorter intercardinal points as
+/// slim diamonds. North is toward `-z`. Vertex colour carries the tone: the north point brightest.
+pub fn compass_rose(inner: f32, outer: f32) -> Mesh {
+    let mut soup = Soup::default();
+    let y = 0.06;
+    let at = |bearing: f32, r: f32| Vec3::new(bearing.sin() * r, y, -bearing.cos() * r);
+    let dim = [0.30, 0.42, 0.60, 1.0];
+    let mid = [0.48, 0.62, 0.82, 1.0];
+    let bright = [0.95, 1.0, 1.0, 1.0];
+    let segments = 192;
+    for (r0, r1) in [(inner, inner + 0.25), (outer - 0.25, outer)] {
+        soup.color = Some(dim);
+        for i in 0..segments {
+            let a = i as f32 / segments as f32 * TAU;
+            let b = (i + 1) as f32 / segments as f32 * TAU;
+            soup.quad(at(a, r0), at(a, r1), at(b, r1), at(b, r0));
+        }
+    }
+    // Ticks every 10°: cardinals span the band, every 30° two thirds, the rest one third.
+    for i in 0..36 {
+        let a = i as f32 / 36.0 * TAU;
+        let len = if i % 9 == 0 { 1.0 } else if i % 3 == 0 { 0.62 } else { 0.3 };
+        let half = if i % 9 == 0 { 0.006 } else { 0.0035 };
+        let (r0, r1) = (inner + 0.4, inner + 0.4 + (outer - inner - 0.8) * len);
+        soup.color = Some(if i % 9 == 0 { mid } else { dim });
+        soup.quad(at(a - half, r0), at(a - half, r1), at(a + half, r1), at(a + half, r0));
+    }
+    // Points: slim diamonds reaching in over the water's edge, north longest and brightest.
+    let point = |soup: &mut Soup, bearing: f32, reach: f32, width: f32, color: [f32; 4]| {
+        let tip_in = at(bearing, inner - reach);
+        let tip_out = at(bearing, outer + reach * 0.35);
+        let waist = (inner + outer) * 0.5;
+        let side = bearing + std::f32::consts::FRAC_PI_2;
+        let w = Vec3::new(side.sin(), 0.0, -side.cos()) * width;
+        let mid_point = at(bearing, waist);
+        soup.color = Some(color);
+        soup.quad(tip_in, mid_point - w, tip_out, mid_point + w);
+    };
+    for i in 0..4 {
+        let bearing = i as f32 * TAU / 4.0;
+        let color = if i == 0 { bright } else { mid };
+        point(&mut soup, bearing, if i == 0 { 7.0 } else { 5.0 }, 1.1, color);
+    }
+    for i in 0..4 {
+        point(&mut soup, TAU / 8.0 + i as f32 * TAU / 4.0, 3.0, 0.7, dim);
+    }
+    soup.mesh()
+}

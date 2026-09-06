@@ -297,7 +297,8 @@ fn setup_scene(
         Transform::from_translation(to_world_h(hc, 0.05)),
     ));
 
-    // Playable boundary and bearing reference: a faint ring with four compass buoys, north brightest.
+    // Playable boundary and bearing reference: a faint ring, a dim compass rose on the water just
+    // outside it, and four compass buoys, north brightest.
     commands.spawn((
         Mesh3d(meshes.add(
             Torus { minor_radius: 0.18, major_radius: t.sea_radius }.mesh().major_resolution(192).minor_resolution(8),
@@ -309,6 +310,18 @@ fn setup_scene(
             ..default()
         })),
         Transform::from_xyz(0.0, 0.05, 0.0),
+    ));
+    commands.spawn((
+        Mesh3d(meshes.add(models::compass_rose(t.sea_radius + 6.0, t.sea_radius + 16.0))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            // Faint self-light so it reads at night without ever competing with the beam.
+            emissive: LinearRgba::new(0.12, 0.12, 0.12, 1.0),
+            unlit: true,
+            cull_mode: None,
+            ..default()
+        })),
+        Name::new("Compass rose"),
     ));
     let buoy_body = meshes.add(Cylinder::new(0.6, 2.2));
     for (i, bearing) in [0.0f32, 90.0, 180.0, 270.0].into_iter().enumerate() {
