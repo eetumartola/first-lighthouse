@@ -4,6 +4,7 @@ mod app;
 mod audio;
 mod debug;
 mod entities;
+#[cfg(not(target_arch = "wasm32"))]
 mod fog;
 mod labels;
 mod models;
@@ -31,22 +32,22 @@ fn main() {
         window.fit_canvas_to_parent = true;
         window.prevent_default_event_handling = true;
     }
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin { primary_window: Some(window), ..default() }))
-        .add_plugins((
-            app::AppPlugin,
-            sea::SeaPlugin,
-            scene::ScenePlugin,
-            entities::EntitiesPlugin,
-            labels::LabelsPlugin,
-            ui::UiPlugin,
-            fog::FogPlugin,
-            audio::AudioPlugin,
-            debug::DebugPlugin,
-            spiral_widget::SpiralWidgetPlugin,
-        ))
-        .add_systems(Update, dispatch_audio)
-        .run();
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins.set(WindowPlugin { primary_window: Some(window), ..default() })).add_plugins((
+        app::AppPlugin,
+        sea::SeaPlugin,
+        scene::ScenePlugin,
+        entities::EntitiesPlugin,
+        labels::LabelsPlugin,
+        ui::UiPlugin,
+        audio::AudioPlugin,
+        debug::DebugPlugin,
+        spiral_widget::SpiralWidgetPlugin,
+    ));
+    // Volumetric sea fog is native only; the browser build cannot afford its raymarch.
+    #[cfg(not(target_arch = "wasm32"))]
+    app.add_plugins(fog::FogPlugin);
+    app.add_systems(Update, dispatch_audio).run();
 }
 
 /// Feed simulation events to the audio layer and drive the mechanism loop.

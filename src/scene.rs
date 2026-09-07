@@ -6,7 +6,9 @@ use crate::sea::dawn_amount;
 use crate::sim::{self, world_weaver, Footprint, Phase, Rules};
 use bevy::camera::Exposure;
 use bevy::core_pipeline::tonemapping::Tonemapping;
-use bevy::light::{VolumetricFog, VolumetricLight};
+#[cfg(not(target_arch = "wasm32"))]
+use bevy::light::VolumetricFog;
+use bevy::light::VolumetricLight;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use glam::Vec2;
@@ -134,27 +136,36 @@ fn setup_scene(
     });
 
     // Camera: fixed, elevated, north up. Fog and bloom carry the atmosphere.
-    commands.spawn((
-        MainCamera,
-        bevy::ui::IsDefaultUiCamera,
-        Camera3d::default(),
-        Projection::from(PerspectiveProjection { fov: 47f32.to_radians(), ..default() }),
-        // Framed so the full sea disc (radius 100) fits vertically with room for the bottom HUD.
-        // `FIRST_LIGHT_CAMERA=x,y,z,tx,ty,tz` (render coordinates) overrides it for model review.
-        review_camera()
-            .unwrap_or_else(|| Transform::from_xyz(0.0, 225.0, 125.0).looking_at(Vec3::new(0.0, 0.0, 14.0), Vec3::Y)),
-        Tonemapping::TonyMcMapface,
-        Bloom { intensity: 0.22, ..Bloom::NATURAL },
-        Exposure { ev100: BASE_EV100 },
-        VolumetricFog {
-            // Bevy's ambient term is applied over the whole fog volume regardless of density, so
-            // it draws the volume's box on screen. The faint moonlit mist comes from the sky
-            // light below instead, which scatters only where the density texture has fog.
-            ambient_intensity: 0.0,
-            ..default()
-        },
-        Msaa::Sample4,
-    ));
+    let camera = commands
+        .spawn((
+            MainCamera,
+            bevy::ui::IsDefaultUiCamera,
+            Camera3d::default(),
+            Projection::from(PerspectiveProjection { fov: 47f32.to_radians(), ..default() }),
+            // Framed so the full sea disc (radius 100) fits vertically with room for the bottom
+            // HUD. `FIRST_LIGHT_CAMERA=x,y,z,tx,ty,tz` (render coordinates) overrides it for
+            // model review.
+            review_camera().unwrap_or_else(|| {
+                Transform::from_xyz(0.0, 225.0, 125.0).looking_at(Vec3::new(0.0, 0.0, 14.0), Vec3::Y)
+            }),
+            Tonemapping::TonyMcMapface,
+            Bloom { intensity: 0.22, ..Bloom::NATURAL },
+            Exposure { ev100: BASE_EV100 },
+            Msaa::Sample4,
+        ))
+        .id();
+    // Volumetric fog is a native-only luxury: its raymarch is what makes the browser build crawl,
+    // so the web camera renders without it (the fog module is not even added there).
+    #[cfg(not(target_arch = "wasm32"))]
+    commands.entity(camera).insert(VolumetricFog {
+        // Bevy's ambient term is applied over the whole fog volume regardless of density, so it
+        // draws the volume's box on screen. The faint moonlit mist comes from the sky light
+        // below instead, which scatters only where the density texture has fog.
+        ambient_intensity: 0.0,
+        ..default()
+    });
+    #[cfg(target_arch = "wasm32")]
+    let _ = camera;
 
     // Sky light: moon by night, warming and brightening into the sun at first light. It is far
     // too faint to pick out islands, but the fog scatters it, so the sea keeps a trace of mist
